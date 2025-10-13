@@ -13,7 +13,7 @@ The code here extends the original polynomial-based slit shape model (described 
 ### Workflow
 
 1. **Generate test data**: `make_testdata.py` creates synthetic detector frames
-2. **Measure slit deltas**: `make_slitdeltas.py` measures the `delta_x` values from the data
+2. **Measure slit deltas**: Use either `make_slitdeltas.py` (Gaussian fitting) or `make_slitdeltas_xcorr.py` (cross-correlation) to measure the `delta_x` values
 3. **Extract spectra**: Run `uv run py.test` to perform extraction using both the data and measured deltas
 
 
@@ -80,8 +80,47 @@ uv run pre-commit run --all-files
 - **Python version**: 3.11+ (specified in pyproject.toml)
 
 
-## Important Notes
+## Slit Delta Measurement Methods
 
+Two approaches are available for measuring slit deltas:
+
+### 1. Gaussian Fitting (`make_slitdeltas.py`)
+- **Method**: Detects peaks in each row, fits Gaussians for sub-pixel precision, tracks peaks by proximity, uses median of offsets
+- **Strengths**: Detailed diagnostics, handles varying peak counts, detects individual peak issues
+- **Key features**:
+  - Proximity-based peak matching (max 2px shift between rows)
+  - Robust statistics (MAD-based variance)
+  - Quality flags for fit failures, outliers, weak correlations
+  - Reasonable peak count filtering (±2 from most common)
+
+### 2. Cross-Correlation (`make_slitdeltas_xcorr.py`) - **Recommended**
+- **Method**: Cross-correlates each row with reference (median of middle 5 rows), finds shift from correlation peak
+- **Strengths**: Simpler, faster, naturally handles all peaks together, no peak detection needed
+- **Key features**:
+  - 10x upsampling for 0.1 pixel precision
+  - Reference: median of middle 5 rows (sharper, less smearing)
+  - Automatic quality detection via correlation strength
+  - Flags bad rows (e.g., row 0 with spurious peaks) via weak correlation
+
+**Performance**: Cross-correlation achieves <0.06 px RMS agreement with Gaussian fitting for most test cases.
+
+**When to use which**:
+- Use **cross-correlation** for normal slit tilt measurements (all peaks shift together)
+- Use **Gaussian fitting** when peaks appear/disappear or need detailed individual peak diagnostics
+
+**Comparison**: Run `uv run python compare_slitdelta_methods.py` to compare both methods side-by-side.
+
+## Important Implementation Notes
+
+### Slit Delta Measurement
+- **Single offset per row**: Both methods assume all peaks in a row shift together (true for instrumental slit tilt)
+- **Output format**: NPZ files with `filename`, `avg_offset`, `std_offset`, `median_offsets` arrays
+- **Interpolation**: Missing/bad rows are filled by linear interpolation from valid neighbors
+- **Quality detection**:
+  - Gaussian method: peak count validation, fit quality, trajectory outliers
+  - XCorr method: correlation strength (>1e7 is good, <50% of mean is weak)
+
+### General Development
 - Always use `uv run` for Python commands to ensure correct environment
 - Pre-commit hooks enforce code quality (runs Ruff automatically)
 - The C extensions must compile successfully for extraction to work
