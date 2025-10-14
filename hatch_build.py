@@ -33,6 +33,14 @@ class CustomBuildHook(BuildHookInterface):
             "-O3",
         ]
 
+        # Add CFLAGS from environment if present
+        if "CFLAGS" in os.environ:
+            c_compile_cmd.extend(os.environ["CFLAGS"].split())
+
+        # Add debug flag if CHARSLIT_DEBUG is set
+        if os.environ.get("CHARSLIT_DEBUG", "0") == "1":
+            c_compile_cmd.append("-DDEBUG=1")
+
         for inc in include_dirs:
             c_compile_cmd.extend(["-I", inc])
 
@@ -58,6 +66,10 @@ class CustomBuildHook(BuildHookInterface):
             "-std=c++17",
             "-fvisibility=hidden",
         ]
+
+        # Add CXXFLAGS from environment if present
+        if "CXXFLAGS" in os.environ:
+            cxx_compile_cmd.extend(os.environ["CXXFLAGS"].split())
 
         for inc in include_dirs:
             cxx_compile_cmd.extend(["-I", inc])

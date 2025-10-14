@@ -51,11 +51,16 @@ uv build
 
 # For development: rebuild C/C++ extensions after code changes
 uv sync --reinstall-package charslit
+
+# Enable debug output in C code (for troubleshooting)
+CHARSLIT_DEBUG=1 uv sync --reinstall-package charslit
 ```
 
 **IMPORTANT:** The package is installed in editable mode by `uv sync`. However:
 - **Python code changes** are picked up automatically (no rebuild needed)
 - **C/C++ code changes** require `uv sync --reinstall-package charslit` to recompile the extension
+
+**Debug builds**: Set `CHARSLIT_DEBUG=1` or `CFLAGS="-DDEBUG=1"` when rebuilding to enable verbose C code output.
 
 **Note:** See "Release Process" section below for publishing to PyPI.
 
