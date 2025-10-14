@@ -242,222 +242,229 @@ def test_extract_basic(ensure_test_data):
     print(f"RMS of residuals: {rms}")
 
 
-def test_extract_with_file(default_datasets, fits_file, slitchar_file, request):
+@pytest.mark.parametrize(
+    "dataset_name",
+    [
+        "shifted",
+        "unshifted",
+        "discontinuous",
+        "multislope",
+        "Rsim",
+        "Hsim",
+    ],
+)
+def test_extract_with_file(default_datasets, fits_file, slitchar_file, dataset_name):
     """
     Test extraction with FITS and slitchar files.
 
     This test replicates the functionality of fixed_test_extract.py but in pytest framework.
     It can use either:
-    1. Fixture data (default datasets) - runs all datasets
+    1. Fixture data (default datasets) - runs parameterized for each dataset
     2. Command-line provided files via --fits-file and --slitchar-file - runs single test
 
     Args:
         default_datasets: List of dataset dicts with 'name', 'fits', 'npz' keys
         fits_file: FITS file path from command line (or None)
         slitchar_file: NPZ file path from command line (or None)
-        request: pytest request object
+        dataset_name: Name of the dataset to test (from parametrize)
     """
-    # Use command-line args if provided, otherwise iterate over fixture data
+    # Use command-line args if provided, otherwise use fixture data
     if fits_file is not None and slitchar_file is not None:
-        datasets_to_test = [
-            {
-                "name": os.path.basename(fits_file).replace(".fits", ""),
-                "fits": fits_file,
-                "npz": slitchar_file,
-            }
-        ]
+        dataset = {
+            "name": os.path.basename(fits_file).replace(".fits", ""),
+            "fits": fits_file,
+            "npz": slitchar_file,
+        }
     else:
-        datasets_to_test = default_datasets
+        # Find the dataset matching the parameter
+        dataset = next((d for d in default_datasets if d["name"] == dataset_name), None)
+        if dataset is None:
+            pytest.skip(f"Dataset {dataset_name} not found in default datasets")
 
-    # Run test for each dataset
-    for dataset in datasets_to_test:
-        fname = dataset["fits"]
-        npz_file = dataset["npz"]
-        test_name = dataset["name"]
+    # Run test for this dataset
+    fname = dataset["fits"]
+    npz_file = dataset["npz"]
+    test_name = dataset["name"]
 
-        # Skip if files don't exist
-        if not os.path.exists(fname):
-            pytest.skip(f"FITS file not found: {fname}")
-        if not os.path.exists(npz_file):
-            pytest.skip(f"NPZ file not found: {npz_file}")
+    # Skip if files don't exist
+    if not os.path.exists(fname):
+        pytest.skip(f"FITS file not found: {fname}")
+    if not os.path.exists(npz_file):
+        pytest.skip(f"NPZ file not found: {npz_file}")
 
-        print(f"\n===== Testing {test_name} =====")
-        print(f"FITS: {fname}")
-        print(f"NPZ: {npz_file}")
+    print(f"\n===== Testing {test_name} =====")
+    print(f"FITS: {fname}")
+    print(f"NPZ: {npz_file}")
 
-        # Define test parameters (matching fixed_test_extract.py)
-        osample = 10
-        lambda_sP = 0.0
-        lambda_sL = 2.0
-        maxiter = 20
+    # Define test parameters (matching fixed_test_extract.py)
+    osample = 10
+    lambda_sP = 0.0
+    lambda_sL = 2.0
+    maxiter = 20
 
-        # Load the FITS file data
-        with fits.open(fname) as hdul:
-            im = hdul[0].data.astype(np.float64)
+    # Load the FITS file data
+    with fits.open(fname) as hdul:
+        im = hdul[0].data.astype(np.float64)
 
-        nrows, ncols = im.shape
-        print(f"Loaded image with shape: {im.shape}")
+    nrows, ncols = im.shape
+    print(f"Loaded image with shape: {im.shape}")
 
-        # Calculate derived values
-        ny = osample * (nrows + 1) + 1
+    # Calculate derived values
+    ny = osample * (nrows + 1) + 1
 
-        # Load slitdeltas from NPZ file
-        slitdeltas_data = np.load(npz_file)
-        slitdeltas = slitdeltas_data["median_offsets"]
-        print(f"Loaded slitdeltas with shape: {slitdeltas.shape}")
+    # Load slitdeltas from NPZ file
+    slitdeltas_data = np.load(npz_file)
+    slitdeltas = slitdeltas_data["median_offsets"]
+    print(f"Loaded slitdeltas with shape: {slitdeltas.shape}")
 
-        # Oversample slitdeltas to match ny
-        slitdeltas_os = np.interp(
-            np.linspace(0, nrows - 1, ny), np.arange(len(slitdeltas)), slitdeltas
+    # Oversample slitdeltas to match ny
+    slitdeltas_os = np.interp(
+        np.linspace(0, nrows - 1, ny), np.arange(len(slitdeltas)), slitdeltas
+    )
+
+    # Create other required arrays
+    pix_unc = np.ones_like(im) * 0.1  # Constant uncertainty
+    mask = np.ones_like(im, dtype=np.uint8)  # All pixels valid
+
+    # For the central line, use the middle of the image
+    ycen = np.ones(ncols, dtype=np.float64) * (nrows / 2.0)
+
+    # Initial slit function as horizontal mean of im, with outliers rejected first
+    slit_func_in = sigma_clip(im, sigma=6).mean(axis=1)
+
+    # Oversample slit_func_in
+    slit_func_in = np.interp(
+        np.linspace(0, nrows - 1, ny), np.arange(nrows), slit_func_in
+    )
+    # Normalize
+    slit_func_in = slit_func_in / np.sum(slit_func_in)
+
+    # Call the extract function
+    result, sL, sP, model, unc, info, img_mad, img_mad_mask = charslit.extract(
+        im,
+        pix_unc,
+        mask,
+        ycen,
+        slitdeltas_os,
+        osample,
+        lambda_sP,
+        lambda_sL,
+        maxiter,
+        slit_func_in,
+    )
+
+    print(f"Extract function returned: {result}")
+    print(f"Info array: {info}")
+    print(f"Finite values in spectrum: {np.sum(np.isfinite(sP))}/{len(sP)}")
+
+    # Assertions
+    assert result == 0, f"Extract function should return 0 for success, got {result}"
+    assert sP.shape == (
+        ncols,
+    ), f"Spectrum should have shape ({ncols},), got {sP.shape}"
+    assert sL.shape == (ny,), f"Slit function should have shape ({ny},), got {sL.shape}"
+    assert model.shape == (
+        nrows,
+        ncols,
+    ), f"Model should have shape ({nrows}, {ncols}), got {model.shape}"
+    assert unc.shape == (
+        ncols,
+    ), f"Uncertainty should have shape ({ncols},), got {unc.shape}"
+
+    # Check residuals
+    residuals = im - model
+    rms = np.sqrt(np.mean(residuals[np.isfinite(residuals)] ** 2))
+    print(f"RMS of residuals: {rms:.4f}")
+
+    # Visualize the results (matching fixed_test_extract.py)
+    plt.figure(figsize=(15, 12))
+
+    # Input image
+    plt.subplot(3, 2, 1)
+    peak_ampl = np.percentile(im, 95)
+    plt.imshow(
+        im, origin="lower", aspect="auto", cmap="viridis", vmin=0, vmax=peak_ampl
+    )
+    plt.colorbar(label="Flux")
+    plt.title("Input Image")
+    plt.xlabel("Column")
+    plt.ylabel("Row")
+
+    # Plot slitdeltas on the input image
+    ref_col = int(ncols / 2)
+    if 0 <= ref_col < ncols:
+        y_trace = np.linspace(0, nrows - 1, nrows)
+        x_trace = ref_col + np.interp(
+            y_trace, np.linspace(0, nrows - 1, ny), slitdeltas_os
         )
+        plt.plot(x_trace, y_trace, "w-", lw=1.5, alpha=0.7)
 
-        # Create other required arrays
-        pix_unc = np.ones_like(im) * 0.1  # Constant uncertainty
-        mask = np.ones_like(im, dtype=np.uint8)  # All pixels valid
+    # Model
+    plt.subplot(3, 2, 3)
+    plt.imshow(
+        model, origin="lower", aspect="auto", cmap="viridis", vmin=0, vmax=peak_ampl
+    )
+    plt.colorbar(label="Flux")
+    plt.title("Model")
+    plt.xlabel("Column")
+    plt.ylabel("Row")
 
-        # For the central line, use the middle of the image
-        ycen = np.ones(ncols, dtype=np.float64) * (nrows / 2.0)
+    # Plot slitdeltas on the model
+    if 0 <= ref_col < ncols:
+        plt.plot(x_trace, y_trace, "w-", lw=1.5, alpha=0.7)
 
-        # Initial slit function as horizontal mean of im, with outliers rejected first
-        slit_func_in = sigma_clip(im, sigma=6).mean(axis=1)
+    # Residuals
+    plt.subplot(3, 2, 5)
+    vmax = np.maximum(
+        np.abs(np.nanpercentile(residuals, 3)), np.nanpercentile(residuals, 97)
+    )
+    plt.imshow(
+        residuals,
+        origin="lower",
+        aspect="auto",
+        cmap="RdBu_r",
+        vmin=-vmax,
+        vmax=vmax,
+    )
+    plt.colorbar(label="Residual Flux")
+    plt.title(f"Residuals (Data - Model), RMS: {rms:.4f}")
+    plt.xlabel("Column")
+    plt.ylabel("Row")
 
-        # Oversample slit_func_in
-        slit_func_in = np.interp(
-            np.linspace(0, nrows - 1, ny), np.arange(nrows), slit_func_in
-        )
-        # Normalize
-        slit_func_in = slit_func_in / np.sum(slit_func_in)
+    # Plot slitdeltas on residuals
+    if 0 <= ref_col < ncols:
+        plt.plot(x_trace, y_trace, "k-", lw=1.5, alpha=0.7)
 
-        # Call the extract function
-        result, sL, sP, model, unc, info, img_mad, img_mad_mask = charslit.extract(
-            im,
-            pix_unc,
-            mask,
-            ycen,
-            slitdeltas_os,
-            osample,
-            lambda_sP,
-            lambda_sL,
-            maxiter,
-            slit_func_in,
-        )
+    # Extracted spectrum
+    plt.subplot(3, 2, 2)
+    plt.plot(np.arange(ncols), sP)
+    plt.title("Extracted Spectrum")
+    plt.xlabel("Column")
+    plt.ylabel("Flux")
+    plt.grid(True, alpha=0.3)
 
-        print(f"Extract function returned: {result}")
-        print(f"Info array: {info}")
-        print(f"Finite values in spectrum: {np.sum(np.isfinite(sP))}/{len(sP)}")
+    # Slit function
+    plt.subplot(3, 2, 4)
+    y_coords = np.linspace(0, nrows - 1, ny)
+    plt.plot(y_coords, sL)
+    plt.title("Slit Function")
+    plt.xlabel("Row (interpolated)")
+    plt.ylabel("Value")
+    plt.grid(True, alpha=0.3)
 
-        # Assertions
-        assert (
-            result == 0
-        ), f"Extract function should return 0 for success, got {result}"
-        assert sP.shape == (
-            ncols,
-        ), f"Spectrum should have shape ({ncols},), got {sP.shape}"
-        assert sL.shape == (
-            ny,
-        ), f"Slit function should have shape ({ny},), got {sL.shape}"
-        assert model.shape == (
-            nrows,
-            ncols,
-        ), f"Model should have shape ({nrows}, {ncols}), got {model.shape}"
-        assert unc.shape == (
-            ncols,
-        ), f"Uncertainty should have shape ({ncols},), got {unc.shape}"
+    plt.tight_layout()
 
-        # Check residuals
-        residuals = im - model
-        rms = np.sqrt(np.mean(residuals[np.isfinite(residuals)] ** 2))
-        print(f"RMS of residuals: {rms:.4f}")
+    # Save the figure
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    plots_dir = os.path.join(base_dir, "plots")
+    os.makedirs(plots_dir, exist_ok=True)
+    output_filename = f"{test_name}_visualization.png"
+    output_file = os.path.join(plots_dir, output_filename)
+    plt.savefig(output_file, dpi=150)
+    print(f"Visualization saved to {output_file}")
 
-        # Visualize the results (matching fixed_test_extract.py)
-        plt.figure(figsize=(15, 12))
-
-        # Input image
-        plt.subplot(3, 2, 1)
-        peak_ampl = np.percentile(im, 95)
-        plt.imshow(
-            im, origin="lower", aspect="auto", cmap="viridis", vmin=0, vmax=peak_ampl
-        )
-        plt.colorbar(label="Flux")
-        plt.title("Input Image")
-        plt.xlabel("Column")
-        plt.ylabel("Row")
-
-        # Plot slitdeltas on the input image
-        ref_col = int(ncols / 2)
-        if 0 <= ref_col < ncols:
-            y_trace = np.linspace(0, nrows - 1, nrows)
-            x_trace = ref_col + np.interp(
-                y_trace, np.linspace(0, nrows - 1, ny), slitdeltas_os
-            )
-            plt.plot(x_trace, y_trace, "w-", lw=1.5, alpha=0.7)
-
-        # Model
-        plt.subplot(3, 2, 3)
-        plt.imshow(
-            model, origin="lower", aspect="auto", cmap="viridis", vmin=0, vmax=peak_ampl
-        )
-        plt.colorbar(label="Flux")
-        plt.title("Model")
-        plt.xlabel("Column")
-        plt.ylabel("Row")
-
-        # Plot slitdeltas on the model
-        if 0 <= ref_col < ncols:
-            plt.plot(x_trace, y_trace, "w-", lw=1.5, alpha=0.7)
-
-        # Residuals
-        plt.subplot(3, 2, 5)
-        vmax = np.maximum(
-            np.abs(np.nanpercentile(residuals, 3)), np.nanpercentile(residuals, 97)
-        )
-        plt.imshow(
-            residuals,
-            origin="lower",
-            aspect="auto",
-            cmap="RdBu_r",
-            vmin=-vmax,
-            vmax=vmax,
-        )
-        plt.colorbar(label="Residual Flux")
-        plt.title(f"Residuals (Data - Model), RMS: {rms:.4f}")
-        plt.xlabel("Column")
-        plt.ylabel("Row")
-
-        # Plot slitdeltas on residuals
-        if 0 <= ref_col < ncols:
-            plt.plot(x_trace, y_trace, "k-", lw=1.5, alpha=0.7)
-
-        # Extracted spectrum
-        plt.subplot(3, 2, 2)
-        plt.plot(np.arange(ncols), sP)
-        plt.title("Extracted Spectrum")
-        plt.xlabel("Column")
-        plt.ylabel("Flux")
-        plt.grid(True, alpha=0.3)
-
-        # Slit function
-        plt.subplot(3, 2, 4)
-        y_coords = np.linspace(0, nrows - 1, ny)
-        plt.plot(y_coords, sL)
-        plt.title("Slit Function")
-        plt.xlabel("Row (interpolated)")
-        plt.ylabel("Value")
-        plt.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-
-        # Save the figure
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        plots_dir = os.path.join(base_dir, "plots")
-        os.makedirs(plots_dir, exist_ok=True)
-        output_filename = f"{test_name}_visualization.png"
-        output_file = os.path.join(plots_dir, output_filename)
-        plt.savefig(output_file, dpi=150)
-        print(f"Visualization saved to {output_file}")
-
-        # Close the figure to free memory
-        plt.close("all")
+    # Close the figure to free memory
+    plt.close("all")
 
 
 if __name__ == "__main__":
