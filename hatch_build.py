@@ -14,29 +14,29 @@ class CustomBuildHook(BuildHookInterface):
         # Get compilation settings
         ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
         nanobind_dir = Path(nanobind.__file__).parent
+        src_dir = Path("charslit")
         include_dirs = [
             sysconfig.get_path("include"),
             nanobind.include_dir(),
             str(nanobind_dir / "ext" / "robin_map" / "include"),  # For tsl/robin_map.h
-            str(Path.cwd()),
+            str(src_dir),
         ]
 
         # Compile C file first as object file
         c_compiler = os.environ.get("CC", "cc")
-        c_obj = "extract.o"
+        c_obj = str(src_dir / "extract.o")
 
         c_compile_cmd = [
             c_compiler,
             "-c",
             "-fPIC",
             "-O3",
-            "-DDEBUG",
         ]
 
         for inc in include_dirs:
             c_compile_cmd.extend(["-I", inc])
 
-        c_compile_cmd.extend(["extract.c", "-o", c_obj])
+        c_compile_cmd.extend([str(src_dir / "extract.c"), "-o", c_obj])
 
         print(f"Compiling C: {' '.join(c_compile_cmd)}")
         result = subprocess.run(c_compile_cmd, capture_output=True, text=True)
@@ -48,7 +48,7 @@ class CustomBuildHook(BuildHookInterface):
 
         # Now compile and link the C++ wrapper with the C object
         cxx_compiler = os.environ.get("CXX", "c++")
-        output = f"charslit{ext_suffix}"
+        output = f"charslit/_charslit{ext_suffix}"
 
         cxx_compile_cmd = [
             cxx_compiler,
@@ -67,7 +67,7 @@ class CustomBuildHook(BuildHookInterface):
         nb_combined = nanobind_src_dir / "nb_combined.cpp"
         cxx_compile_cmd.append(str(nb_combined))
 
-        cxx_compile_cmd.extend(["extract_wrapper.cpp", c_obj])
+        cxx_compile_cmd.extend([str(src_dir / "extract_wrapper.cpp"), c_obj])
         cxx_compile_cmd.extend(["-o", output])
 
         # Platform-specific flags
@@ -90,9 +90,9 @@ class CustomBuildHook(BuildHookInterface):
 
         build_data["force_include"][output] = output
 
-        # Create __init__.py only if it doesn't exist
-        init_file = Path("__init__.py")
+        # __init__.py already exists in charslit/ directory, make sure it's included
+        init_file = src_dir / "__init__.py"
         if not init_file.exists():
-            init_content = 'from .charslit import extract\n\n__all__ = ["extract"]\n'
+            init_content = 'from ._charslit import extract\n\n__all__ = ["extract"]\n'
             init_file.write_text(init_content)
-        build_data["force_include"]["__init__.py"] = "__init__.py"
+        build_data["force_include"][str(init_file)] = str(init_file)

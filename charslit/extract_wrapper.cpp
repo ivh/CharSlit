@@ -135,7 +135,7 @@ nb::tuple extract_wrapper(
     );
 }
 
-NB_MODULE(charslit, m) {
+NB_MODULE(_charslit, m) {
     m.doc() = "CharSlit: Python wrapper for characterized slit spectral extraction";
 
     m.def("extract", &extract_wrapper,
