@@ -25,6 +25,8 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["charslit"]
 
+[tool.hatch.build.targets.wheel.hooks.custom]
+
 [tool.hatch.build]
 exclude = [
     "*.npz",
