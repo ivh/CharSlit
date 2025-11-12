@@ -30,7 +30,6 @@ class CustomBuildHook(BuildHookInterface):
             "-c",
             "-fPIC",
             "-O3",
-            "-DDEBUG",
         ]
 
         for inc in include_dirs:
