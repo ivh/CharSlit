@@ -913,13 +913,11 @@ int extract(        int ncols,
     // If we want to smooth the spectrum we need at least delta_x = 1
     // Otherwise delta_x = 0 works if there is no curvature
     delta_x = lambda_sP == 0 ? 0 : 1;
-    for (x = 0; x < ncols; x++)
+    // Find maximum curvature from oversampled slitdeltas array (size ny)
+    for (iy = 0; iy < ny; iy++)
     {
-        for (iy = 0; iy < nrows; iy++)
-        {
-            tmp = ceil(fabs(slitdeltas[iy]));
-            delta_x = max(delta_x, tmp);
-        }
+        tmp = ceil(fabs(slitdeltas[iy]));
+        delta_x = max(delta_x, tmp);
     }
     nx = 4 * delta_x + 1; /* Maximum horizontal shift in detector pixels due to slit image curvature         */
 
