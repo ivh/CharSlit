@@ -880,7 +880,7 @@ int extract(        int ncols,
     int iter, delta_x;
     unsigned int isum;
     int *ycen_offset;
-    int y_lower_lim = nrows / 2;
+    int y_lower_lim;
 
     // For the solving of the equation system
     double *l_Aij, *l_bj, *p_Aij, *p_bj;
@@ -950,12 +950,18 @@ int extract(        int ncols,
     ycen_offset = malloc(ncols * sizeof(int));
 
     // remove integer values from ycen, put into ycen_offset
+    // also calculate y_lower_lim from the median ycen value
     for (x = 0; x < ncols; x++)
     {
         ycen_offset[x] = ycen[x];
         ycen[x] = ycen[x] - ycen_offset[x];
     }
-    
+
+    // Calculate y_lower_lim from the median ycen_offset
+    // For constant ycen (most common case), this is just that value
+    // For varying ycen, use the median to determine the extraction window center
+    y_lower_lim = ycen_offset[ncols / 2];  // Use middle column as reference
+
     xi_zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitdeltas, xi, zeta, m_zeta);
 
     /* Loop through sL , sP reconstruction until convergence is reached */
@@ -1138,7 +1144,9 @@ int extract(        int ncols,
         {
             for (x = delta_x; x < ncols - delta_x; x++)
             {
-                if (mask[im_index(x, y)])
+                // Only calculate cost for pixels in the extraction window
+                // For multi-order data, pixels outside the window should not contribute
+                if (mask[im_index(x, y)] && m_zeta[mzeta_index(x, y)] > 0)
                 {
                     tmp = model[im_index(x, y)] - im[im_index(x, y)];
                     diff[isum] = tmp;
@@ -1159,13 +1167,18 @@ int extract(        int ncols,
         {
             for (x = delta_x; x < ncols - delta_x; x++)
             {
-                // The MAD is significantly smaller than the STD was, since it describes
-                // only the central peak, not the distribution
-                // The factor 40 was chosen, since it is roughly equal to 6 * STD
-                if (fabs(model[im_index(x, y)] - im[im_index(x, y)]) < 40. * dev)
-                    mask[im_index(x, y)] = 1;
-                else
-                    mask[im_index(x, y)] = 0;
+                // Only update mask for pixels in the extraction window
+                // For multi-order data, pixels outside the window should remain masked
+                if (m_zeta[mzeta_index(x, y)] > 0)
+                {
+                    // The MAD is significantly smaller than the STD was, since it describes
+                    // only the central peak, not the distribution
+                    // The factor 40 was chosen, since it is roughly equal to 6 * STD
+                    if (fabs(model[im_index(x, y)] - im[im_index(x, y)]) < 40. * dev)
+                        mask[im_index(x, y)] = 1;
+                    else
+                        mask[im_index(x, y)] = 0;
+                }
             }
         }
 

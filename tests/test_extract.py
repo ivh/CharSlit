@@ -326,11 +326,37 @@ def test_extract_with_file(default_datasets, fits_file, slitchar_file, dataset_n
     pix_unc = np.ones_like(im) * 0.1  # Constant uncertainty
     mask = np.ones_like(im, dtype=np.uint8)  # All pixels valid
 
-    # For the central line, use the middle of the image
-    ycen = np.ones(ncols, dtype=np.float64) * (nrows / 2.0)
+    # For multi-order data (like Hsim/Rsim), find the dominant order near nrows/2
+    # and use that as ycen. The algorithm extracts one order at a time.
+    row_profile = np.sum(im, axis=1)
+    # Find peaks in the row profile (each peak is a spectral order)
+    from scipy.signal import find_peaks
+    peaks, _ = find_peaks(row_profile, height=np.max(row_profile) * 0.1, distance=3)
 
-    # Initial slit function as horizontal mean of im, with outliers rejected first
-    slit_func_in = sigma_clip(im, sigma=6).mean(axis=1)
+    if len(peaks) > 0:
+        # Choose the order closest to nrows/2
+        closest_peak = peaks[np.argmin(np.abs(peaks - nrows/2))]
+        ycen = np.ones(ncols, dtype=np.float64) * closest_peak
+        print(f"Multi-order data detected. Found {len(peaks)} orders at rows: {peaks}")
+        print(f"Extracting order at row {closest_peak} (closest to nrows/2={nrows/2:.0f})")
+
+        # For multi-order data, calculate initial slit function from a window around ycen
+        # This prevents contamination from other orders
+        window_half = min(15, nrows // 10)  # Adaptive window size
+        y_start = max(0, int(closest_peak) - window_half)
+        y_end = min(nrows, int(closest_peak) + window_half + 1)
+        print(f"Calculating initial slit function from rows {y_start} to {y_end}")
+
+        slit_func_in = np.zeros(nrows)
+        window_data = sigma_clip(im[y_start:y_end, :], sigma=6).mean(axis=1)
+        slit_func_in[y_start:y_end] = window_data
+    else:
+        # Simple data with signal near center
+        ycen = np.ones(ncols, dtype=np.float64) * (nrows / 2.0)
+        print(f"Using ycen = nrows/2 = {nrows/2:.1f}")
+
+        # Initial slit function as horizontal mean of im, with outliers rejected first
+        slit_func_in = sigma_clip(im, sigma=6).mean(axis=1)
 
     # Oversample slit_func_in
     slit_func_in = np.interp(
