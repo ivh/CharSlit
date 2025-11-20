@@ -40,14 +40,14 @@ nb::tuple extract_wrapper(
     // Calculate ny (needed for output sL array)
     int ny = osample * (nrows + 1) + 1;
 
-    // Create output arrays using numpy arrays - allocate with new
-    double *sP_data = new double[ncols];
-    double *sL_data = new double[ny];
-    double *model_data = new double[nrows * ncols];
-    double *unc_data = new double[ncols];
-    double *info_data = new double[5];
-    double *img_mad_data = new double[nrows * ncols];
-    uint8_t *img_mad_mask_data = new uint8_t[nrows * ncols];
+    // Create output arrays using numpy arrays - allocate with new and zero-initialize
+    double *sP_data = new double[ncols]();
+    double *sL_data = new double[ny]();
+    double *model_data = new double[nrows * ncols]();
+    double *unc_data = new double[ncols]();
+    double *info_data = new double[5]();
+    double *img_mad_data = new double[nrows * ncols]();
+    uint8_t *img_mad_mask_data = new uint8_t[nrows * ncols]();
 
     size_t shape_1d_sP[1] = {static_cast<size_t>(ncols)};
     size_t shape_1d_sL[1] = {static_cast<size_t>(ny)};
