@@ -326,15 +326,17 @@ def test_extract_with_file(default_datasets, fits_file, slitchar_file, dataset_n
     pix_unc = np.ones_like(im) * 0.1  # Constant uncertainty
     mask = np.ones_like(im, dtype=np.uint8)  # All pixels valid
 
-    # For the central line, use the middle of the image
-    ycen = np.ones(ncols, dtype=np.float64) * (nrows / 2.0)
+    # For the central line, use zeros for perfect horizontal alignment
+    # The C code splits ycen into integer offset and fractional part
+    # ycen=0 represents the middle of the slit function coordinate system
+    ycen = np.zeros(ncols, dtype=np.float64)
 
     # Initial slit function as horizontal mean of im, with outliers rejected first
     slit_func_in = sigma_clip(im, sigma=6).mean(axis=1)
 
     # Oversample slit_func_in
     slit_func_in = np.interp(
-        np.linspace(0, nrows - 1, ny), np.arange(nrows), slit_func_in
+        np.linspace(0, ny - 1, ny), np.arange(nrows), slit_func_in
     )
     # Normalize
     slit_func_in = slit_func_in / np.sum(slit_func_in)
