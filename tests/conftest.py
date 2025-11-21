@@ -11,37 +11,36 @@ import glob
 import warnings
 
 
-def pytest_addoption(parser):
-    """Add custom command-line options."""
-    parser.addoption(
-        "--save-data",
-        action="store_true",
-        default=False,
-        help="Save input images and output models from slitdec tests as .npz files"
-    )
-
-
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
-        "save_output: mark test as one that should save output data when --save-data is used"
+        "save_output: mark test to save output data as .npz and .png files (excluded from default runs)"
     )
 
 
 @pytest.fixture
 def save_test_data(request):
     """
-    Fixture to save test data when --save-data option is enabled.
+    Fixture to save test data for tests marked with @pytest.mark.save_output.
+
+    Tests with this marker will automatically save their outputs to test_data_output/
+    as .npz (data arrays) and .png (visualization) files.
 
     Usage in tests:
-        result = slitchar.slitdec(...)
-        save_test_data(data['im'], result['model'])
+        @pytest.mark.save_output
+        def test_something(self, data, save_test_data):
+            result = slitchar.slitdec(...)
+            save_test_data(data['im'], result['model'],
+                          spectrum=result['spectrum'],
+                          slitfunction=result['slitfunction'],
+                          uncertainty=result['uncertainty'])
     """
-    save_enabled = request.config.getoption("--save-data")
+    # Check if this test has the save_output marker
+    save_enabled = request.node.get_closest_marker("save_output") is not None
 
     if not save_enabled:
-        # Return a no-op function if saving is disabled
+        # Return a no-op function if test doesn't have the marker
         return lambda *args, **kwargs: None
 
     # Create output directory if it doesn't exist
