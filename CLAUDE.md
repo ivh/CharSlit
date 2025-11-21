@@ -9,6 +9,26 @@ CharSlit is a Python wrapper for the `slitdec` C library, which performs slit de
 - **Slit function**: 1D array representing the spatial illumination pattern
 - **Model**: Reconstructed 2D image from spectrum ⊗ slit function
 
+### **IMPORTANT: Coordinate System and Terminology**
+
+**Critical understanding for working with this codebase:**
+
+- **All test data contains SINGLE spectral orders** (not multiple orders)
+- **Slit direction**: Vertical (Y axis, rows) - this is the SPATIAL direction across the slit
+- **Dispersion/wavelength direction**: Horizontal (X axis, columns) - this is the SPECTRAL direction
+- **Slit curvature**: Describes how the spectral order curves - i.e., the horizontal position shift as you move vertically through the image
+- **Image coordinate system**: Origin at lower-left corner (x=0, y=0)
+
+**What you see in the data:**
+- Bright vertical features (like in Hsim.fits) are **emission lines** at different wavelengths, NOT separate spectral orders
+- Curved bright features (like in discontinuous.fits, multislope.fits) show the **single spectral order** curving across the detector
+- The entire illuminated region in each image is ONE spectral order
+
+**slitcurve polynomial**:
+- Format: `delta_x = c0 + c1*(y - ycen) + c2*(y - ycen)^2` for each column x
+- Describes the horizontal offset of the slit as a function of vertical position
+- Should trace the curvature of the spectral order visible in the data
+
 ## Build System
 
 ### Technology Stack
