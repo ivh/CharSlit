@@ -8,6 +8,7 @@ matplotlib.use('Agg')  # Non-interactive backend for testing
 import matplotlib.pyplot as plt
 from astropy.io import fits
 import glob
+import warnings
 
 
 def pytest_addoption(parser):
@@ -160,17 +161,19 @@ def save_test_data(request):
         if 'slitfunction' in extra_arrays:
             ax5 = fig.add_axes(pos5)
             slitfunction = extra_arrays['slitfunction']
-            y = np.arange(len(slitfunction))
+            x = np.arange(len(slitfunction))
 
-            # Plot slit function vertically (y-axis) to match image orientation
-            ax5.plot(slitfunction, y, 'r-', linewidth=1.5)
-            ax5.set_xlabel('Intensity')
-            ax5.set_ylabel('Oversampled subpixel')
+            # Plot slit function horizontally for better detail visibility
+            ax5.plot(x, slitfunction, 'r-', linewidth=1.5)
+            ax5.set_xlabel('Oversampled subpixel')
+            ax5.set_ylabel('Intensity')
             ax5.set_title('Slit Function')
             ax5.grid(True, alpha=0.3)
-            ax5.invert_yaxis()  # Match image orientation (0 at top)
 
-        plt.savefig(png_filename, dpi=100)
+        # Suppress tight_layout warning for fixed-position axes
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='.*not compatible with tight_layout.*')
+            plt.savefig(png_filename, dpi=100)
         plt.close(fig)
         print(f"Saved plot to: {png_filename}")
 

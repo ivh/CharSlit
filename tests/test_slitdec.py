@@ -30,7 +30,10 @@ class TestBasicFunctionality:
         )
         assert isinstance(result, dict)
         assert result["return_code"] == 0
-        save_test_data(data["im"], result["model"])
+        save_test_data(data["im"], result["model"],
+                      spectrum=result["spectrum"],
+                      slitfunction=result["slitfunction"],
+                      uncertainty=result["uncertainty"])
 
     @pytest.mark.save_output
     def test_with_custom_parameters(self, simple_image_data, save_test_data):
@@ -49,7 +52,10 @@ class TestBasicFunctionality:
             maxiter=10,
         )
         assert result["return_code"] == 0
-        save_test_data(data["im"], result["model"])
+        save_test_data(data["im"], result["model"],
+                      spectrum=result["spectrum"],
+                      slitfunction=result["slitfunction"],
+                      uncertainty=result["uncertainty"])
 
 
 class TestOutputStructure:
@@ -330,7 +336,11 @@ class TestNumericalBehavior:
         assert np.sum(result["mask"]) < np.sum(
             data["mask"]
         ), "Mask should reject some outlier pixels"
-        save_test_data(im_with_outliers, result["model"], mask_out=result["mask"])
+        save_test_data(im_with_outliers, result["model"],
+                      spectrum=result["spectrum"],
+                      slitfunction=result["slitfunction"],
+                      uncertainty=result["uncertainty"],
+                      mask_out=result["mask"])
 
 
 class TestEdgeCases:
