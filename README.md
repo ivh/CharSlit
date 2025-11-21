@@ -7,7 +7,7 @@ Python wrapper for the `slitdec` C library, providing slit decomposition for ast
 CharSlit separates a 2D spectral image into its components:
 - **1D Spectrum**: Intensity vs wavelength
 - **1D Slit function**: Spatial illumination pattern along the slit
-- **2D Model**: Reconstructed image from spectrum — slit function
+- **2D Model**: Reconstructed image from spectrum âŠ— slit function
 
 The algorithm handles slit curvature, pixel-to-pixel variations, outlier rejection, and applies smoothing constraints during iterative optimization.
 

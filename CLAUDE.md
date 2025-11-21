@@ -7,7 +7,7 @@ This document contains important information about the CharSlit codebase, build 
 CharSlit is a Python wrapper for the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
 - **Spectrum**: 1D array representing intensity vs wavelength
 - **Slit function**: 1D array representing the spatial illumination pattern
-- **Model**: Reconstructed 2D image from spectrum � slit function
+- **Model**: Reconstructed 2D image from spectrum ⊗ slit function
 
 ## Build System
 
@@ -113,7 +113,7 @@ The algorithm:
 **Issue discovered**: The C code allocates memory based on `delta_x`, the maximum horizontal pixel shift. Originally, `delta_x` was calculated **only** from the curve polynomial:
 
 ```c
-delta_x = max(ceil(abs(y * curve[1] + y� * curve[2])))
+delta_x = max(ceil(abs(y * curve[1] + y² * curve[2])))
 ```
 
 However, `slitdeltas` adds **additional** horizontal shift! With real data ranging from -3.0 to +2.6 pixels, this caused **out-of-bounds memory access** and crashes.
@@ -202,11 +202,11 @@ The `real_data_files` fixture (tests/conftest.py):
 7. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
 
 Currently 5 real data files:
-- `Hsim.fits` (90�53)
-- `Rsim.fits` (140�84)
-- `discontinuous.fits` (100�150)
-- `fixedslope.fits` (100�150)
-- `multislope.fits` (100�150)
+- `Hsim.fits` (90×53)
+- `Rsim.fits` (140×84)
+- `discontinuous.fits` (100×150)
+- `fixedslope.fits` (100×150)
+- `multislope.fits` (100×150)
 
 ## Common Issues and Solutions
 
