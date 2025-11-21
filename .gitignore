@@ -5,6 +5,7 @@ plots/
 *png
 uv.lock
 test_data_output/
+*.tar.gz
 
 # Compiled object files
 *.o
