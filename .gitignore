@@ -1,0 +1,54 @@
+#manually added
+goodplots/
+plots/
+*.npz
+*png
+uv.lock
+
+# Compiled object files
+*.o
+*.obj
+*.out
+
+# Compiled executables
+*.exe
+*.app
+
+# Libraries
+*.lib
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+
+# IDE specific files
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# macOS specific files
+.DS_Store
+
+# Build directories
+build/
+bin/
+obj/
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+_skbuild/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
