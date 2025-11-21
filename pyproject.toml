@@ -1,0 +1,30 @@
+[build-system]
+requires = ["scikit-build-core", "nanobind", "numpy"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "slitchar"
+version = "0.1.0"
+description = "Slit decomposition with slit characterization"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.20.0",
+    "matplotlib>=3.5.0",
+    "astropy>=5.0.0",
+    "scipy>=1.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "nanobind",
+    "pre-commit>=3.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.scikit-build]
+wheel.packages = []
+wheel.expand-macos-universal-tags = true
+cmake.build-type = "Debug"
+cmake.define = {}
