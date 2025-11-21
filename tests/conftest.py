@@ -6,6 +6,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for testing
 import matplotlib.pyplot as plt
+from astropy.io import fits
+import glob
 
 
 def pytest_addoption(parser):
@@ -22,7 +24,7 @@ def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
-        "uses_slitdec: mark test as calling slitdec() with image data"
+        "save_output: mark test as one that should save output data when --save-data is used"
     )
 
 
@@ -57,8 +59,10 @@ def save_test_data(request):
             Output model from slitdec
         **extra_arrays : additional arrays to save (optional)
         """
-        # Get test name
+        # Get test name and sanitize for filesystem
         test_name = request.node.name
+        # Replace characters that aren't valid in filenames
+        test_name = test_name.replace('[', '_').replace(']', '').replace('/', '_')
 
         # Create filenames
         npz_filename = output_dir / f"{test_name}.npz"
@@ -247,4 +251,64 @@ def minimal_image_data():
         'ncols': ncols,
         'osample': osample,
         'ny': ny
+    }
+
+
+@pytest.fixture(params=glob.glob('data/*.fits'))
+def real_data_files(request):
+    """
+    Load real data from FITS files in data/ directory.
+
+    Looks for corresponding .npz file with slitdeltas, otherwise uses zeros.
+    Hardcodes ycen to middle row and slitcurve to zeros.
+
+    Returns a dictionary with all necessary inputs for slitdec.
+    """
+    fits_path = Path(request.param)
+    npz_path = fits_path.with_suffix('.npz')
+
+    # Load FITS image
+    with fits.open(fits_path) as hdul:
+        im = hdul[0].data.astype(np.float64)
+
+    nrows, ncols = im.shape
+    osample = 6  # Default oversampling
+
+    # Create ycen - middle of each row (0.5)
+    ycen = np.full(ncols, 0.5)
+
+    # Create slitcurve - no curvature
+    slitcurve = np.zeros((ncols, 3))
+
+    # Calculate ny
+    ny = osample * (nrows + 1) + 1
+
+    # Load or create slitdeltas
+    if npz_path.exists():
+        data = np.load(npz_path)
+        slitdeltas = data['slitdeltas']
+        # Verify shape matches
+        if slitdeltas.shape[0] != ny:
+            raise ValueError(f"slitdeltas shape mismatch: expected {ny}, got {slitdeltas.shape[0]}")
+    else:
+        slitdeltas = np.zeros(ny)
+
+    # Create pixel uncertainties (assuming Poisson noise)
+    pix_unc = np.sqrt(np.abs(im) + 1.0)
+
+    # Create mask (all valid initially)
+    mask = np.ones(im.shape, dtype=np.uint8)
+
+    return {
+        'im': im,
+        'pix_unc': pix_unc,
+        'mask': mask,
+        'ycen': ycen,
+        'slitcurve': slitcurve,
+        'slitdeltas': slitdeltas,
+        'nrows': nrows,
+        'ncols': ncols,
+        'osample': osample,
+        'ny': ny,
+        'filename': fits_path.name
     }

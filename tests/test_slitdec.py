@@ -16,7 +16,7 @@ class TestBasicFunctionality:
         """Test that slitdec is callable."""
         assert callable(slitchar.slitdec)
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_basic_execution(self, simple_image_data, save_test_data):
         """Test that slitdec runs without errors on valid input."""
         data = simple_image_data
@@ -32,7 +32,7 @@ class TestBasicFunctionality:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_with_custom_parameters(self, simple_image_data, save_test_data):
         """Test slitdec with custom parameters."""
         data = simple_image_data
@@ -55,7 +55,7 @@ class TestBasicFunctionality:
 class TestOutputStructure:
     """Test the structure and types of outputs."""
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_output_keys(self, simple_image_data, save_test_data):
         """Test that all expected keys are present in output."""
         data = simple_image_data
@@ -75,7 +75,7 @@ class TestOutputStructure:
         assert set(result.keys()) == expected_keys
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_output_types(self, simple_image_data, save_test_data):
         """Test that output arrays have correct types."""
         data = simple_image_data
@@ -97,7 +97,7 @@ class TestOutputStructure:
         assert isinstance(result['return_code'], int)
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_output_shapes(self, simple_image_data, save_test_data):
         """Test that output arrays have correct shapes."""
         data = simple_image_data
@@ -118,7 +118,7 @@ class TestOutputStructure:
         assert result['mask'].shape == (data['nrows'], data['ncols'])
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_output_dtypes(self, simple_image_data, save_test_data):
         """Test that output arrays have correct dtypes."""
         data = simple_image_data
@@ -222,7 +222,7 @@ class TestInputValidation:
 class TestNumericalBehavior:
     """Test numerical behavior of the algorithm."""
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_spectrum_normalization(self, simple_image_data, save_test_data):
         """Test that the extracted spectrum is properly normalized."""
         data = simple_image_data
@@ -242,7 +242,7 @@ class TestNumericalBehavior:
         assert np.sum(result['spectrum'] > 0) > 0.8 * len(result['spectrum'])
         save_test_data(data['im'], result['model'], spectrum=result['spectrum'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_slitfunction_normalization(self, simple_image_data, save_test_data):
         """Test that the slit function is normalized."""
         data = simple_image_data
@@ -261,7 +261,7 @@ class TestNumericalBehavior:
         assert np.isclose(integral, data['osample'], rtol=0.1)
         save_test_data(data['im'], result['model'], slitfunction=result['slitfunction'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_model_reconstruction(self, simple_image_data, save_test_data):
         """Test that the model has correct properties."""
         data = simple_image_data
@@ -286,7 +286,7 @@ class TestNumericalBehavior:
             assert correlation > 0.5, "Model should correlate with input"
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_info_array_content(self, simple_image_data, save_test_data):
         """Test that info array contains meaningful values."""
         data = simple_image_data
@@ -308,7 +308,7 @@ class TestNumericalBehavior:
         assert info[3] > 0, "Should have run at least one iteration"
         save_test_data(data['im'], result['model'], info=result['info'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_mask_modification(self, simple_image_data, save_test_data):
         """Test that mask is modified to reject outliers."""
         data = simple_image_data
@@ -336,7 +336,7 @@ class TestNumericalBehavior:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_minimal_image(self, minimal_image_data, save_test_data):
         """Test with minimal valid image size."""
         data = minimal_image_data
@@ -352,7 +352,7 @@ class TestEdgeCases:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_with_curvature(self, curved_image_data, save_test_data):
         """Test with slit curvature."""
         data = curved_image_data
@@ -368,7 +368,7 @@ class TestEdgeCases:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'], slitcurve=data['slitcurve'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_zero_smoothing(self, simple_image_data, save_test_data):
         """Test with zero smoothing parameters."""
         data = simple_image_data
@@ -385,7 +385,7 @@ class TestEdgeCases:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_high_smoothing(self, simple_image_data, save_test_data):
         """Test with high smoothing parameters."""
         data = simple_image_data
@@ -402,7 +402,7 @@ class TestEdgeCases:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_low_iterations(self, simple_image_data, save_test_data):
         """Test with low iteration count."""
         data = simple_image_data
@@ -421,7 +421,7 @@ class TestEdgeCases:
         assert result['info'][3] <= 3  # Should be close to maxiter
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_different_osample_values(self, simple_image_data, save_test_data):
         """Test with different oversampling factors."""
         data = simple_image_data
@@ -448,7 +448,7 @@ class TestEdgeCases:
 class TestDefaultParameters:
     """Test default parameter behavior."""
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_default_osample(self, simple_image_data, save_test_data):
         """Test that default osample=6 works correctly."""
         data = simple_image_data
@@ -468,7 +468,7 @@ class TestDefaultParameters:
         assert result['return_code'] == 0
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_explicit_vs_default_parameters(self, simple_image_data, save_test_data):
         """Test that explicit parameters match defaults."""
         data = simple_image_data
@@ -506,7 +506,7 @@ class TestDefaultParameters:
 class TestMemoryManagement:
     """Test memory management and data ownership."""
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_input_arrays_unchanged(self, simple_image_data, save_test_data):
         """Test that input arrays are not modified (except mask)."""
         data = simple_image_data
@@ -535,7 +535,7 @@ class TestMemoryManagement:
         np.testing.assert_array_equal(data['slitdeltas'], slitdeltas_copy)
         save_test_data(data['im'], result['model'])
 
-    @pytest.mark.uses_slitdec
+    @pytest.mark.save_output
     def test_multiple_calls(self, simple_image_data, save_test_data):
         """Test that multiple calls work correctly."""
         data = simple_image_data
@@ -562,3 +562,36 @@ class TestMemoryManagement:
         np.testing.assert_array_equal(result1['spectrum'], result2['spectrum'])
         np.testing.assert_array_equal(result1['slitfunction'], result2['slitfunction'])
         save_test_data(data['im'], result1['model'])
+
+
+class TestRealData:
+    """Test slitdec on real data from FITS files."""
+
+    @pytest.mark.save_output
+    def test_real_data_files(self, real_data_files, save_test_data):
+        """Test slitdec on real FITS data from data/ directory."""
+        data = real_data_files
+
+        result = slitchar.slitdec(
+            data['im'],
+            data['pix_unc'],
+            data['mask'],
+            data['ycen'],
+            data['slitcurve'],
+            data['slitdeltas'],
+            osample=data['osample']
+        )
+
+        # Basic checks
+        assert result['return_code'] == 0, f"slitdec failed on {data['filename']}"
+        assert np.all(np.isfinite(result['spectrum'])), f"Non-finite values in spectrum for {data['filename']}"
+        assert np.all(np.isfinite(result['model'])), f"Non-finite values in model for {data['filename']}"
+
+        # Save data with filename in the extra arrays
+        save_test_data(
+            data['im'],
+            result['model'],
+            spectrum=result['spectrum'],
+            slitfunction=result['slitfunction'],
+            uncertainty=result['uncertainty']
+        )
