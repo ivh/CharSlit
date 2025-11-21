@@ -41,8 +41,48 @@ nb::dict slitdec_wrapper(
     // Calculate ny (size of slit function array)
     int ny = osample * (nrows + 1) + 1;
 
-    if (slitdeltas.shape(0) != ny) {
-        throw std::runtime_error("slitdeltas must have length ny = osample * (nrows + 1) + 1");
+    // slitdeltas can be either nrows or ny length
+    // If nrows, we interpolate to ny
+    int slitdeltas_len = slitdeltas.shape(0);
+    double* slitdeltas_interp = nullptr;
+    bool allocated_interp = false;
+
+    if (slitdeltas_len == nrows) {
+        // Copy input data first
+        const double* slitdeltas_data = slitdeltas.data();
+        double* slitdeltas_in = new double[nrows];
+        for (int i = 0; i < nrows; i++) {
+            slitdeltas_in[i] = slitdeltas_data[i];
+        }
+
+        // Linearly interpolate from nrows to ny
+        slitdeltas_interp = new double[ny];
+        allocated_interp = true;
+
+        for (int i = 0; i < ny; i++) {
+            // Map i (0 to ny-1) to position in original array (0 to nrows-1)
+            double pos = i * (nrows - 1.0) / (ny - 1.0);
+            int idx_low = static_cast<int>(pos);
+            int idx_high = idx_low + 1;
+
+            if (idx_high >= nrows) {
+                // Edge case: at the end
+                slitdeltas_interp[i] = slitdeltas_in[nrows - 1];
+            } else {
+                // Linear interpolation
+                double frac = pos - idx_low;
+                slitdeltas_interp[i] = (1.0 - frac) * slitdeltas_in[idx_low]
+                                      + frac * slitdeltas_in[idx_high];
+            }
+        }
+        delete[] slitdeltas_in;
+    } else if (slitdeltas_len == ny) {
+        // Already correct length, make a copy
+        slitdeltas_interp = new double[ny];
+        allocated_interp = true;
+        std::memcpy(slitdeltas_interp, slitdeltas.data(), ny * sizeof(double));
+    } else {
+        throw std::runtime_error("slitdeltas must have length nrows or ny = osample * (nrows + 1) + 1");
     }
 
     // Allocate output arrays
@@ -83,7 +123,7 @@ nb::dict slitdec_wrapper(
         mask_copy,
         ycen_copy,
         const_cast<double*>(slitcurve.data()),
-        const_cast<double*>(slitdeltas.data()),
+        slitdeltas_interp,
         osample,
         lambda_sP,
         lambda_sL,
@@ -94,6 +134,11 @@ nb::dict slitdec_wrapper(
         unc,
         info
     );
+
+    // Clean up interpolated slitdeltas
+    if (allocated_interp && slitdeltas_interp != nullptr) {
+        delete[] slitdeltas_interp;
+    }
 
     // Create nanobind arrays that own the data
     nb::capsule sP_owner(sP, [](void *p) noexcept { delete[] (double *) p; });
@@ -154,8 +199,9 @@ NB_MODULE(slitchar, m) {
           "    Order centre line offset from pixel row boundary\n"
           "slitcurve : ndarray (ncols, 3)\n"
           "    Polynomial coefficients for slit curvature\n"
-          "slitdeltas : ndarray (ny,)\n"
-          "    Slit deltas, where ny = osample * (nrows + 1) + 1\n"
+          "slitdeltas : ndarray (nrows,) or (ny,)\n"
+          "    Slit deltas. Can be length nrows (will be linearly interpolated to ny)\n"
+          "    or length ny = osample * (nrows + 1) + 1 (used directly)\n"
           "osample : int, optional\n"
           "    Subpixel oversampling factor (default: 6)\n"
           "lambda_sP : float, optional\n"

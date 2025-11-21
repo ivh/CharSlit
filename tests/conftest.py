@@ -259,13 +259,14 @@ def real_data_files(request):
     """
     Load real data from FITS files in data/ directory.
 
-    Looks for corresponding .npz file with slitdeltas, otherwise uses zeros.
+    Looks for corresponding slitdeltas_*.npz file with median_offsets, otherwise uses zeros.
     Hardcodes ycen to middle row and slitcurve to zeros.
 
     Returns a dictionary with all necessary inputs for slitdec.
     """
     fits_path = Path(request.param)
-    npz_path = fits_path.with_suffix('.npz')
+    # Look for slitdeltas_{basename}.npz
+    npz_path = fits_path.parent / f"slitdeltas_{fits_path.stem}.npz"
 
     # Load FITS image
     with fits.open(fits_path) as hdul:
@@ -283,15 +284,15 @@ def real_data_files(request):
     # Calculate ny
     ny = osample * (nrows + 1) + 1
 
-    # Load or create slitdeltas
+    # Load or create slitdeltas (length nrows - wrapper will interpolate to ny)
     if npz_path.exists():
         data = np.load(npz_path)
-        slitdeltas = data['slitdeltas']
-        # Verify shape matches
-        if slitdeltas.shape[0] != ny:
-            raise ValueError(f"slitdeltas shape mismatch: expected {ny}, got {slitdeltas.shape[0]}")
+        slitdeltas = data['median_offsets']
+        # Verify shape matches nrows
+        if slitdeltas.shape[0] != nrows:
+            raise ValueError(f"median_offsets shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
     else:
-        slitdeltas = np.zeros(ny)
+        slitdeltas = np.zeros(nrows)
 
     # Create pixel uncertainties (assuming Poisson noise)
     pix_unc = np.sqrt(np.abs(im) + 1.0)
