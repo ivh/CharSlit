@@ -31,17 +31,19 @@ int slitdec(        int ncols,
                     double *info);
 
 int xi_zeta_tensors(
-                    int ncols,
-                    int nrows,
-                    int ny,
-                    double *ycen,
-                    int *ycen_offset,
-                    int y_lower_lim,
-                    int osample,
-                    double *PSF_curve,
-                    xi_ref *xi,
-                    zeta_ref *zeta,
-                    int *m_zeta);
+    int ncols,
+    int nrows,
+    int ny,
+    double *ycen,
+    int *ycen_offset,
+    int y_lower_lim,
+    int osample,
+    double *slitcurve,
+    double *slitdeltas,
+    xi_ref *xi,
+    zeta_ref *zeta,
+    int *m_zeta)
+;
 
 int create_spectral_model(
     int ncols,
