@@ -7,7 +7,7 @@ This document contains important information about the CharSlit codebase, build 
 CharSlit is a Python wrapper for the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
 - **Spectrum**: 1D array representing intensity vs wavelength
 - **Slit function**: 1D array representing the spatial illumination pattern
-- **Model**: Reconstructed 2D image from spectrum — slit function
+- **Model**: Reconstructed 2D image from spectrum ï¿½ slit function
 
 ## Build System
 
@@ -55,14 +55,14 @@ uv cache clean
 
 ### Testing
 ```bash
-# Run all tests
+# Run fast tests (24 tests in ~0.2s, excludes save_output marked tests)
 uv run pytest
+
+# Run visualization tests (8 tests in ~5s, generates plots)
+uv run pytest -m save_output
 
 # Run specific test class
 uv run pytest tests/test_slitdec.py::TestRealData -v
-
-# Save test outputs (creates .npz and .png files in test_data_output/)
-uv run pytest --save-data
 ```
 
 ## The slitdec Algorithm
@@ -113,7 +113,7 @@ The algorithm:
 **Issue discovered**: The C code allocates memory based on `delta_x`, the maximum horizontal pixel shift. Originally, `delta_x` was calculated **only** from the curve polynomial:
 
 ```c
-delta_x = max(ceil(abs(y * curve[1] + y² * curve[2])))
+delta_x = max(ceil(abs(y * curve[1] + yï¿½ * curve[2])))
 ```
 
 However, `slitdeltas` adds **additional** horizontal shift! With real data ranging from -3.0 to +2.6 pixels, this caused **out-of-bounds memory access** and crashes.
@@ -156,7 +156,7 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
 
 ### Test Organization
 
-33 tests organized in 8 classes:
+32 tests organized in 8 classes:
 - **TestBasicFunctionality**: Import, callable, basic execution
 - **TestOutputStructure**: Output format validation
 - **TestInputValidation**: Error handling for invalid inputs
@@ -166,15 +166,29 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
 - **TestMemoryManagement**: Input preservation, multiple calls
 - **TestRealData**: Tests on real FITS files from `data/` directory
 
-### --save-data Option
+### Running Tests
 
-Tests marked with `@pytest.mark.save_output` save outputs when `--save-data` is used:
+**Fast automated testing** (24 tests in ~0.2s):
+```bash
+pytest
+```
+Default runs exclude `@pytest.mark.save_output` tests for speed (configured in `pyproject.toml`).
+
+**Generate visualization plots** (8 tests in ~5s):
+```bash
+pytest -m save_output
+```
+Tests marked with `@pytest.mark.save_output` automatically save outputs to `test_data_output/`:
 - **NPZ file**: Contains im, model, spectrum, slitfunction, uncertainty
-- **PNG file**: Three-panel plot (input, model, difference)
-  - Input and model use viridis colormap
-  - Difference uses seismic colormap (symmetric around zero)
+- **PNG file**: 5-panel plot with fixed positions to prevent axes shifting
+  - Top row: Input image, Model reconstruction, Difference (all viridis/seismic colormaps)
+  - Bottom row: Extracted spectrum with Â±1Ïƒ uncertainty, Slit function (both as line plots)
 
-Outputs saved to `test_data_output/` (gitignored).
+Currently 4 marked tests (8 total with parametrization):
+- `test_basic_execution`
+- `test_with_custom_parameters`
+- `test_mask_modification`
+- `test_real_data_files` (parametrized over 5 FITS files)
 
 ### Real Data Fixtures
 
@@ -182,16 +196,17 @@ The `real_data_files` fixture (tests/conftest.py):
 1. Loads all FITS files from `data/*.fits`
 2. Looks for corresponding `slitdeltas_{basename}.npz` files
 3. Loads `median_offsets` array from NPZ (length nrows)
-4. Falls back to zeros if NPZ doesn't exist
-5. Hardcodes: `ycen=0.5` (middle of row), `slitcurve=zeros` (no curvature)
-6. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
+4. Wrapper automatically interpolates slitdeltas from nrows â†’ ny before passing to C
+5. Falls back to zeros if NPZ doesn't exist
+6. Hardcodes: `ycen=0.5` (middle of row), `slitcurve=zeros` (no curvature)
+7. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
 
 Currently 5 real data files:
-- `Hsim.fits` (90×53)
-- `Rsim.fits` (140×84)
-- `discontinuous.fits` (100×150)
-- `fixedslope.fits` (100×150)
-- `multislope.fits` (100×150)
+- `Hsim.fits` (90ï¿½53)
+- `Rsim.fits` (140ï¿½84)
+- `discontinuous.fits` (100ï¿½150)
+- `fixedslope.fits` (100ï¿½150)
+- `multislope.fits` (100ï¿½150)
 
 ## Common Issues and Solutions
 
@@ -295,7 +310,7 @@ Structure:
 
 3. **To visualize results**:
    ```bash
-   uv run pytest --save-data
+   uv run pytest -m save_output
    # Check test_data_output/*.png
    ```
 
