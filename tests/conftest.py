@@ -76,38 +76,101 @@ def save_test_data(request):
         np.savez(npz_filename, **save_dict)
         print(f"\nSaved test data to: {npz_filename}")
 
-        # Create 3-panel plot
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        # Create 5-panel plot with fixed positions to prevent movement
+        # Top row: 3 equal panels (input, model, difference)
+        # Bottom row: 2 panels with 2:1 ratio (spectrum, slit function)
+        fig = plt.figure(figsize=(15, 7.5))
 
         # Calculate difference
         diff = im - model
 
-        # Plot 1: Input image
-        im1 = axes[0].imshow(im, cmap='viridis', aspect='auto')
-        axes[0].set_title('Input Image')
-        axes[0].set_xlabel('Column')
-        axes[0].set_ylabel('Row')
-        plt.colorbar(im1, ax=axes[0], label='Intensity')
+        # Define fixed positions [left, bottom, width, height] in figure coordinates
+        # Top row (height 2/3 of plotting area)
+        top_height = 0.50
+        bottom_height = 0.25
+        vertical_gap = 0.08
+        top_bottom = 0.08 + bottom_height + vertical_gap
 
-        # Plot 2: Model
-        im2 = axes[1].imshow(model, cmap='viridis', aspect='auto')
-        axes[1].set_title('Model')
-        axes[1].set_xlabel('Column')
-        axes[1].set_ylabel('Row')
-        plt.colorbar(im2, ax=axes[1], label='Intensity')
+        # Horizontal positions for 3 panels in top row
+        panel_width = 0.26
+        colorbar_width = 0.015
+        h_gap = 0.04
+        left_margin = 0.06
 
-        # Plot 3: Difference (im - model)
-        # Use symmetric colormap limits for difference
+        pos1 = [left_margin, top_bottom, panel_width, top_height]
+        pos2 = [left_margin + panel_width + h_gap, top_bottom, panel_width, top_height]
+        pos3 = [left_margin + 2*(panel_width + h_gap), top_bottom, panel_width, top_height]
+
+        # Bottom row positions
+        bottom_left_width = 2 * panel_width + h_gap
+        bottom_right_width = panel_width
+        pos4 = [left_margin, 0.08, bottom_left_width, bottom_height]
+        pos5 = [left_margin + bottom_left_width + h_gap, 0.08, bottom_right_width, bottom_height]
+
+        # Top row - Panel 1: Input image
+        ax1 = fig.add_axes(pos1)
+        im1 = ax1.imshow(im, cmap='viridis', aspect='auto')
+        ax1.set_title('Input Image')
+        ax1.set_xlabel('Column')
+        ax1.set_ylabel('Row')
+        cax1 = fig.add_axes([pos1[0] + pos1[2] + 0.005, pos1[1], colorbar_width, pos1[3]])
+        fig.colorbar(im1, cax=cax1, label='Intensity')
+
+        # Top row - Panel 2: Model
+        ax2 = fig.add_axes(pos2)
+        im2 = ax2.imshow(model, cmap='viridis', aspect='auto')
+        ax2.set_title('Model')
+        ax2.set_xlabel('Column')
+        ax2.set_ylabel('Row')
+        cax2 = fig.add_axes([pos2[0] + pos2[2] + 0.005, pos2[1], colorbar_width, pos2[3]])
+        fig.colorbar(im2, cax=cax2, label='Intensity')
+
+        # Top row - Panel 3: Difference (im - model)
+        ax3 = fig.add_axes(pos3)
         vmax_diff = np.max(np.abs(diff))
-        im3 = axes[2].imshow(diff, cmap='seismic', aspect='auto',
-                            vmin=-vmax_diff, vmax=vmax_diff)
-        axes[2].set_title('Difference (Input - Model)')
-        axes[2].set_xlabel('Column')
-        axes[2].set_ylabel('Row')
-        plt.colorbar(im3, ax=axes[2], label='Residual')
+        im3 = ax3.imshow(diff, cmap='seismic', aspect='auto',
+                         vmin=-vmax_diff, vmax=vmax_diff)
+        ax3.set_title('Difference (Input - Model)')
+        ax3.set_xlabel('Column')
+        ax3.set_ylabel('Row')
+        cax3 = fig.add_axes([pos3[0] + pos3[2] + 0.005, pos3[1], colorbar_width, pos3[3]])
+        fig.colorbar(im3, cax=cax3, label='Residual')
 
-        plt.tight_layout()
-        plt.savefig(png_filename, dpi=100, bbox_inches='tight')
+        # Bottom row - Panel 4: Spectrum (spans 2/3 width)
+        if 'spectrum' in extra_arrays and 'uncertainty' in extra_arrays:
+            ax4 = fig.add_axes(pos4)
+            spectrum = extra_arrays['spectrum']
+            uncertainty = extra_arrays['uncertainty']
+            x = np.arange(len(spectrum))
+
+            # Plot spectrum as solid line
+            ax4.plot(x, spectrum, 'b-', linewidth=1.5, label='Spectrum')
+
+            # Plot uncertainty as shaded region
+            ax4.fill_between(x, spectrum - uncertainty, spectrum + uncertainty,
+                            alpha=0.3, color='blue', label='±1σ uncertainty')
+
+            ax4.set_xlabel('Column (wavelength direction)')
+            ax4.set_ylabel('Intensity')
+            ax4.set_title('Extracted Spectrum')
+            ax4.legend(loc='best')
+            ax4.grid(True, alpha=0.3)
+
+        # Bottom row - Panel 5: Slit function (spans 1/3 width)
+        if 'slitfunction' in extra_arrays:
+            ax5 = fig.add_axes(pos5)
+            slitfunction = extra_arrays['slitfunction']
+            y = np.arange(len(slitfunction))
+
+            # Plot slit function vertically (y-axis) to match image orientation
+            ax5.plot(slitfunction, y, 'r-', linewidth=1.5)
+            ax5.set_xlabel('Intensity')
+            ax5.set_ylabel('Oversampled subpixel')
+            ax5.set_title('Slit Function')
+            ax5.grid(True, alpha=0.3)
+            ax5.invert_yaxis()  # Match image orientation (0 at top)
+
+        plt.savefig(png_filename, dpi=100)
         plt.close(fig)
         print(f"Saved plot to: {png_filename}")
 
