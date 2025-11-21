@@ -3,6 +3,9 @@
 import numpy as np
 import pytest
 from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for testing
+import matplotlib.pyplot as plt
 
 
 def pytest_addoption(parser):
@@ -44,7 +47,7 @@ def save_test_data(request):
 
     def save_data(im, model, **extra_arrays):
         """
-        Save input image and output model to .npz file.
+        Save input image and output model to .npz file and create a plot.
 
         Parameters
         ----------
@@ -57,16 +60,52 @@ def save_test_data(request):
         # Get test name
         test_name = request.node.name
 
-        # Create filename
-        filename = output_dir / f"{test_name}.npz"
+        # Create filenames
+        npz_filename = output_dir / f"{test_name}.npz"
+        png_filename = output_dir / f"{test_name}.png"
 
         # Prepare data to save
         save_dict = {"im": im, "model": model}
         save_dict.update(extra_arrays)
 
-        # Save to file
-        np.savez(filename, **save_dict)
-        print(f"\nSaved test data to: {filename}")
+        # Save to npz file
+        np.savez(npz_filename, **save_dict)
+        print(f"\nSaved test data to: {npz_filename}")
+
+        # Create 3-panel plot
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+        # Calculate difference
+        diff = im - model
+
+        # Plot 1: Input image
+        im1 = axes[0].imshow(im, cmap='viridis', aspect='auto')
+        axes[0].set_title('Input Image')
+        axes[0].set_xlabel('Column')
+        axes[0].set_ylabel('Row')
+        plt.colorbar(im1, ax=axes[0], label='Intensity')
+
+        # Plot 2: Model
+        im2 = axes[1].imshow(model, cmap='viridis', aspect='auto')
+        axes[1].set_title('Model')
+        axes[1].set_xlabel('Column')
+        axes[1].set_ylabel('Row')
+        plt.colorbar(im2, ax=axes[1], label='Intensity')
+
+        # Plot 3: Difference (im - model)
+        # Use symmetric colormap limits for difference
+        vmax_diff = np.max(np.abs(diff))
+        im3 = axes[2].imshow(diff, cmap='seismic', aspect='auto',
+                            vmin=-vmax_diff, vmax=vmax_diff)
+        axes[2].set_title('Difference (Input - Model)')
+        axes[2].set_xlabel('Column')
+        axes[2].set_ylabel('Row')
+        plt.colorbar(im3, ax=axes[2], label='Residual')
+
+        plt.tight_layout()
+        plt.savefig(png_filename, dpi=100, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved plot to: {png_filename}")
 
     return save_data
 
