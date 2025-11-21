@@ -4,6 +4,7 @@ plots/
 *.npz
 *png
 uv.lock
+test_data_output/
 
 # Compiled object files
 *.o

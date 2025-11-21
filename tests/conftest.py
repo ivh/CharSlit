@@ -2,6 +2,73 @@
 
 import numpy as np
 import pytest
+from pathlib import Path
+
+
+def pytest_addoption(parser):
+    """Add custom command-line options."""
+    parser.addoption(
+        "--save-data",
+        action="store_true",
+        default=False,
+        help="Save input images and output models from slitdec tests as .npz files"
+    )
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers",
+        "uses_slitdec: mark test as calling slitdec() with image data"
+    )
+
+
+@pytest.fixture
+def save_test_data(request):
+    """
+    Fixture to save test data when --save-data option is enabled.
+
+    Usage in tests:
+        result = slitchar.slitdec(...)
+        save_test_data(data['im'], result['model'])
+    """
+    save_enabled = request.config.getoption("--save-data")
+
+    if not save_enabled:
+        # Return a no-op function if saving is disabled
+        return lambda *args, **kwargs: None
+
+    # Create output directory if it doesn't exist
+    output_dir = Path("test_data_output")
+    output_dir.mkdir(exist_ok=True)
+
+    def save_data(im, model, **extra_arrays):
+        """
+        Save input image and output model to .npz file.
+
+        Parameters
+        ----------
+        im : ndarray
+            Input image
+        model : ndarray
+            Output model from slitdec
+        **extra_arrays : additional arrays to save (optional)
+        """
+        # Get test name
+        test_name = request.node.name
+
+        # Create filename
+        filename = output_dir / f"{test_name}.npz"
+
+        # Prepare data to save
+        save_dict = {"im": im, "model": model}
+        save_dict.update(extra_arrays)
+
+        # Save to file
+        np.savez(filename, **save_dict)
+        print(f"\nSaved test data to: {filename}")
+
+    return save_data
 
 
 @pytest.fixture
