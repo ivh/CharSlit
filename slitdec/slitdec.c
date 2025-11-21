@@ -952,6 +952,14 @@ int slitdec(        int ncols,
             delta_x = max(delta_x, tmp);
         }
     }
+
+    // Account for additional shift from slitdeltas
+    for (int iy = 0; iy < ny; iy++)
+    {
+        tmp = ceil(fabs(slitdeltas[iy]));
+        delta_x = max(delta_x, tmp);
+    }
+
     nx = 4 * delta_x + 1; /* Maximum horizontal shift in detector pixels due to slit image curvature         */
 
 #if DEBUG
