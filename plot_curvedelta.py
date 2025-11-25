@@ -26,9 +26,9 @@ def evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows):
         nrows: Number of rows in image
 
     Returns:
-        Tuple of (y_positions, x_offsets)
+        Tuple of (y_positions, x_positions_curve)
         y_positions: Array of row indices
-        x_offsets: Array of horizontal offsets from x_col
+        x_positions_curve: Array of absolute x positions along the curve trajectory
     """
     c0, c1, c2 = slitcurve[x_col]
 
@@ -40,7 +40,7 @@ def evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows):
     # purposes we evaluate the polynomial at integer row positions
     dy = y_positions - ycen_value
 
-    # Evaluate polynomial: delta_x = c0 + c1*dy + c2*dy^2
+    # Evaluate full polynomial: x = c0 + c1*dy + c2*dy^2
     x_offsets = c0 + c1 * dy + c2 * dy**2
 
     return y_positions, x_offsets
@@ -90,10 +90,10 @@ def plot_curvedelta(
 
     # Plot slitcurves at selected positions
     for x_col in x_positions:
-        y_positions, x_offsets = evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows)
+        y_positions, x_positions_curve = evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows)
 
-        # Curve position: x_col + offset
-        x_curve = x_col + x_offsets
+        # Curve position (absolute x positions from polynomial)
+        x_curve = x_positions_curve
 
         # Plot pure slitcurve (no deltas)
         ax.plot(

@@ -539,6 +539,10 @@ def process_fits_file(
 
         nrows, ncols = data.shape
 
+        # Override ycen_value to be the middle row (not middle of bottom pixel!)
+        # ycen should be in row coordinates, not fractional pixel offset
+        ycen_value = nrows / 2.0
+
         # Find and track peaks
         peak_positions, all_peak_fits = find_and_track_peaks(data, config)
 
@@ -575,7 +579,7 @@ def process_fits_file(
 
         for coeffs, fit_info in zip(trajectory_poly_coeffs, trajectory_fit_info):
             if coeffs is not None:
-                sc_coeffs = convert_to_slitcurve_coeffs(coeffs, config.ycen_value)
+                sc_coeffs = convert_to_slitcurve_coeffs(coeffs, ycen_value)
                 slitcurve_coeffs.append(sc_coeffs)
                 avg_cols.append(fit_info["avg_col"])
 
@@ -607,7 +611,7 @@ def process_fits_file(
             "ncols": ncols,
             "slitcurve": slitcurve,
             "slitdeltas": slitdeltas,
-            "ycen_value": config.ycen_value,
+            "ycen_value": ycen_value,
             "poly_degree": config.poly_degree,
             "trajectories": trajectories,
             "trajectory_poly_coeffs": trajectory_poly_coeffs,

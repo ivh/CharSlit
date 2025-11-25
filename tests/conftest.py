@@ -111,8 +111,8 @@ def save_test_data(request):
         ax1 = fig.add_axes(pos1)
         im1 = ax1.imshow(im, cmap='viridis', aspect='auto')
         ax1.set_title('Input Image')
-        ax1.set_xlabel('Column')
-        ax1.set_ylabel('Row')
+        ax1.set_xticks([])
+        ax1.set_yticks([])
         cax1 = fig.add_axes([pos1[0] + pos1[2] + 0.005, pos1[1], colorbar_width, pos1[3]])
         fig.colorbar(im1, cax=cax1, label='Intensity')
 
@@ -120,8 +120,8 @@ def save_test_data(request):
         ax2 = fig.add_axes(pos2)
         im2 = ax2.imshow(model, cmap='viridis', aspect='auto')
         ax2.set_title('Model')
-        ax2.set_xlabel('Column')
-        ax2.set_ylabel('Row')
+        ax2.set_xticks([])
+        ax2.set_yticks([])
         cax2 = fig.add_axes([pos2[0] + pos2[2] + 0.005, pos2[1], colorbar_width, pos2[3]])
         fig.colorbar(im2, cax=cax2, label='Intensity')
 
@@ -131,8 +131,8 @@ def save_test_data(request):
         im3 = ax3.imshow(diff, cmap='seismic', aspect='auto',
                          vmin=-vmax_diff, vmax=vmax_diff)
         ax3.set_title('Difference (Input - Model)')
-        ax3.set_xlabel('Column')
-        ax3.set_ylabel('Row')
+        ax3.set_xticks([])
+        ax3.set_yticks([])
         cax3 = fig.add_axes([pos3[0] + pos3[2] + 0.005, pos3[1], colorbar_width, pos3[3]])
         fig.colorbar(im3, cax=cax3, label='Residual')
 
