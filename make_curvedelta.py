@@ -739,13 +739,16 @@ def save_results(
         basename = os.path.splitext(os.path.basename(result["filename"]))[0]
         output_file = os.path.join(config.data_dir, f"curvedelta_{basename}.npz")
 
+        # Create ycen array from ycen_value
+        ycen = np.full(result["ncols"], result["ycen_value"])
+
         # Save both slitcurve and slitdeltas
         np.savez(
             output_file,
             filename=result["filename"],
             slitcurve=result["slitcurve"],
             slitdeltas=result["slitdeltas"],
-            ycen_value=result["ycen_value"],
+            ycen=ycen,
             poly_degree=result["poly_degree"],
             # Additional diagnostic information
             avg_cols=result["avg_cols"],

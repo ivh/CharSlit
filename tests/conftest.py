@@ -324,14 +324,17 @@ def real_data_files(request):
     """
     Load real data from FITS files in data/ directory.
 
-    Looks for corresponding slitdeltas_*.npz file with median_offsets, otherwise uses zeros.
-    Hardcodes ycen to middle row and slitcurve to zeros.
+    Looks for corresponding curvedelta_*.npz file first (contains slitcurve, slitdeltas, ycen),
+    otherwise falls back to slitdeltas_*.npz (legacy format), or uses zeros.
 
     Returns a dictionary with all necessary inputs for slitdec.
     """
     fits_path = Path(request.param)
-    # Look for slitdeltas_{basename}.npz
-    npz_path = fits_path.parent / f"slitdeltas_{fits_path.stem}.npz"
+
+    # Look for curvedelta_{basename}.npz (new format with curve polynomials)
+    curvedelta_path = fits_path.parent / f"curvedelta_{fits_path.stem}.npz"
+    # Fallback to slitdeltas_{basename}.npz (legacy format)
+    slitdeltas_path = fits_path.parent / f"slitdeltas_{fits_path.stem}.npz"
 
     # Load FITS image
     with fits.open(fits_path) as hdul:
@@ -340,29 +343,42 @@ def real_data_files(request):
     nrows, ncols = im.shape
     osample = 6  # Default oversampling
 
-    # Create slitcurve - no curvature
-    slitcurve = np.zeros((ncols, 3))
-
     # Calculate ny
     ny = osample * (nrows + 1) + 1
 
     # Default values
+    slitcurve = np.zeros((ncols, 3))
     slitdeltas = np.zeros(nrows)
     ycen = np.full(ncols, nrows / 2.0)
 
-    # Load from NPZ if available
-    if npz_path.exists():
-        # Use context manager to ensure file is closed
-        with np.load(npz_path) as data:
-            if 'median_offsets' in data:
-                slitdeltas = data['median_offsets']
-                # Verify shape matches nrows
+    # Load from curvedelta NPZ if available (preferred)
+    if curvedelta_path.exists():
+        with np.load(curvedelta_path) as data:
+            if 'slitcurve' in data:
+                slitcurve = data['slitcurve'].astype(np.float64)
+                if slitcurve.shape[0] != ncols:
+                    raise ValueError(f"slitcurve shape mismatch: expected ({ncols}, 3), got {slitcurve.shape}")
+
+            if 'slitdeltas' in data:
+                slitdeltas = data['slitdeltas'].astype(np.float64)
                 if slitdeltas.shape[0] != nrows:
-                    raise ValueError(f"median_offsets shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
-            
+                    raise ValueError(f"slitdeltas shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
+
             if 'ycen' in data:
                 ycen = data['ycen'].astype(np.float64)
-                # Verify shape matches ncols
+                if ycen.shape[0] != ncols:
+                    raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
+
+    # Fallback to legacy slitdeltas NPZ
+    elif slitdeltas_path.exists():
+        with np.load(slitdeltas_path) as data:
+            if 'median_offsets' in data:
+                slitdeltas = data['median_offsets']
+                if slitdeltas.shape[0] != nrows:
+                    raise ValueError(f"median_offsets shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
+
+            if 'ycen' in data:
+                ycen = data['ycen'].astype(np.float64)
                 if ycen.shape[0] != ncols:
                     raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
 
