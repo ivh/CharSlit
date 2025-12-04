@@ -8,8 +8,13 @@ This script:
 3. Fits the polynomial coefficients as functions of column position P(x)
 4. Calculates residual slitdeltas after removing polynomial curvature
 5. Saves slitcurve polynomials and residual slitdeltas for use in slitdec
+
+Usage:
+    python make_curvedelta.py [options] file1.fits file2.fits ...
+    python make_curvedelta.py --height-multiplier 2.0 data/Hsim.fits
 """
 
+import argparse
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -519,8 +524,45 @@ def interpolate_missing_offsets(
 # =============================================================================
 
 
+def load_ycen_file(filename: str) -> Optional[np.ndarray]:
+    """
+    Load ycen array from NPZ or FITS file.
+
+    Args:
+        filename: Path to NPZ or FITS file containing ycen array
+
+    Returns:
+        ycen array as 1D numpy array, or None if loading fails
+    """
+    try:
+        if filename.endswith('.npz'):
+            # Load from NPZ
+            ycen_data = np.load(filename)
+            ycen_array = ycen_data['ycen']
+        elif filename.endswith('.fits') or filename.endswith('.fit'):
+            # Load from FITS
+            with fits.open(filename) as hdul:
+                ycen_array = hdul[0].data
+        else:
+            print(f"  Warning: Unknown ycen file format: {filename}")
+            return None
+
+        # Ensure 1D array
+        ycen_array = np.atleast_1d(ycen_array).astype(np.float64)
+
+        # Flatten if needed (in case FITS has extra dimensions)
+        if ycen_array.ndim > 1:
+            ycen_array = ycen_array.flatten()
+
+        return ycen_array
+
+    except Exception as e:
+        print(f"  Warning: Could not load ycen from {filename}: {e}")
+        return None
+
+
 def process_fits_file(
-    filename: str, config: CurveDeltaConfig = DEFAULT_CONFIG
+    filename: str, config: CurveDeltaConfig = DEFAULT_CONFIG, ycen_file: Optional[str] = None
 ) -> Optional[dict]:
     """
     Process a FITS file to extract slitcurve and residual slitdeltas.
@@ -528,6 +570,7 @@ def process_fits_file(
     Args:
         filename: Path to FITS file
         config: Configuration for processing
+        ycen_file: Optional path to NPZ file containing ycen array
 
     Returns:
         Dictionary containing analysis results, or None if processing fails
@@ -539,9 +582,47 @@ def process_fits_file(
 
         nrows, ncols = data.shape
 
-        # Override ycen_value to be the middle row (not middle of bottom pixel!)
-        # ycen should be in row coordinates, not fractional pixel offset
-        ycen_value = nrows / 2.0
+        # Load or compute ycen
+        ycen_array = None
+        if ycen_file:
+            # Explicit ycen file provided
+            ycen_array = load_ycen_file(ycen_file)
+            if ycen_array is not None:
+                print(f"  Loaded ycen from {ycen_file}")
+        else:
+            # Try to find ycen_{basename}.npz or ycen_{basename}.fits
+            basename = os.path.splitext(os.path.basename(filename))[0]
+            dirname = os.path.dirname(filename) or '.'
+
+            # Try NPZ first
+            auto_ycen_npz = os.path.join(dirname, f"ycen_{basename}.npz")
+            if os.path.exists(auto_ycen_npz):
+                ycen_array = load_ycen_file(auto_ycen_npz)
+                if ycen_array is not None:
+                    print(f"  Loaded ycen from {auto_ycen_npz}")
+
+            # Try FITS if NPZ not found
+            if ycen_array is None:
+                auto_ycen_fits = os.path.join(dirname, f"ycen_{basename}.fits")
+                if os.path.exists(auto_ycen_fits):
+                    ycen_array = load_ycen_file(auto_ycen_fits)
+                    if ycen_array is not None:
+                        print(f"  Loaded ycen from {auto_ycen_fits}")
+
+        # Determine ycen_value for conversion
+        if ycen_array is not None:
+            if len(ycen_array) != ncols:
+                print(f"  Warning: ycen array length {len(ycen_array)} != ncols {ncols}, ignoring")
+                ycen_array = None
+                ycen_value = nrows / 2.0
+            else:
+                # Use median of ycen array for coordinate transformation
+                ycen_value = np.median(ycen_array)
+                print(f"  Using ycen array (median={ycen_value:.1f})")
+        else:
+            # Default: middle row
+            ycen_value = nrows / 2.0
+            print(f"  Using default ycen={ycen_value:.1f}")
 
         # Find and track peaks
         peak_positions, all_peak_fits = find_and_track_peaks(data, config)
@@ -612,6 +693,7 @@ def process_fits_file(
             "slitcurve": slitcurve,
             "slitdeltas": slitdeltas,
             "ycen_value": ycen_value,
+            "ycen_array": ycen_array,
             "poly_degree": config.poly_degree,
             "trajectories": trajectories,
             "trajectory_poly_coeffs": trajectory_poly_coeffs,
@@ -739,8 +821,11 @@ def save_results(
         basename = os.path.splitext(os.path.basename(result["filename"]))[0]
         output_file = os.path.join(config.data_dir, f"curvedelta_{basename}.npz")
 
-        # Create ycen array from ycen_value
-        ycen = np.full(result["ncols"], result["ycen_value"])
+        # Use ycen array if provided, otherwise create from ycen_value
+        if result["ycen_array"] is not None:
+            ycen = result["ycen_array"]
+        else:
+            ycen = np.full(result["ncols"], result["ycen_value"])
 
         # Save both slitcurve and slitdeltas
         np.savez(
@@ -768,31 +853,103 @@ def save_results(
 
 
 def main():
-    """Main function to process all test data files."""
-    config = DEFAULT_CONFIG
+    """Main function to process FITS files specified on command line."""
+    parser = argparse.ArgumentParser(
+        description="Analyze FITS files to find spectral line curvature and residual slit deltas.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
 
-    # Check for data directory
-    if not os.path.exists(config.data_dir):
-        print(f"Error: {config.data_dir}/ directory not found!")
+    # Config parameters as command-line options
+    parser.add_argument(
+        '--height-multiplier', type=float, default=DEFAULT_CONFIG.height_multiplier,
+        help='Minimum peak height as multiple of mean'
+    )
+    parser.add_argument(
+        '--min-peak-distance', type=int, default=DEFAULT_CONFIG.min_peak_distance,
+        help='Minimum distance between peaks (pixels)'
+    )
+    parser.add_argument(
+        '--fit-window-size', type=int, default=DEFAULT_CONFIG.fit_window_size,
+        help='Window size around peak for Gaussian fitting (pixels)'
+    )
+    parser.add_argument(
+        '--initial-sigma', type=float, default=DEFAULT_CONFIG.initial_sigma,
+        help='Initial guess for Gaussian sigma (pixels)'
+    )
+    parser.add_argument(
+        '--poly-degree', type=int, default=DEFAULT_CONFIG.poly_degree,
+        help='Degree of polynomial for x=P(y) fit'
+    )
+    parser.add_argument(
+        '--coeff-poly-degree', type=int, default=DEFAULT_CONFIG.coeff_poly_degree,
+        help='Degree of polynomial for coefficient interpolation'
+    )
+    parser.add_argument(
+        '--ycen-value', type=float, default=DEFAULT_CONFIG.ycen_value,
+        help='ycen parameter (offset from pixel boundary, 0-1)'
+    )
+    parser.add_argument(
+        '--ycen-file', type=str, default=None,
+        help='NPZ or FITS file containing ycen array (only for single input file). '
+             'If not specified, looks for ycen_{basename}.npz or ycen_{basename}.fits automatically.'
+    )
+    parser.add_argument(
+        '--data-dir', type=str, default=DEFAULT_CONFIG.data_dir,
+        help='Directory for output NPZ files'
+    )
+    parser.add_argument(
+        '--plots-dir', type=str, default=DEFAULT_CONFIG.plots_dir,
+        help='Directory for output plot files'
+    )
+
+    # Positional arguments: input FITS files
+    parser.add_argument(
+        'files', nargs='+', metavar='FILE',
+        help='FITS files to process'
+    )
+
+    args = parser.parse_args()
+
+    # Create config from command-line arguments
+    config = CurveDeltaConfig(
+        height_multiplier=args.height_multiplier,
+        min_peak_distance=args.min_peak_distance,
+        fit_window_size=args.fit_window_size,
+        initial_sigma=args.initial_sigma,
+        poly_degree=args.poly_degree,
+        coeff_poly_degree=args.coeff_poly_degree,
+        ycen_value=args.ycen_value,
+        data_dir=args.data_dir,
+        plots_dir=args.plots_dir,
+    )
+
+    # Check that all input files exist
+    fits_files = []
+    for filename in args.files:
+        if not os.path.exists(filename):
+            print(f"Error: File not found: {filename}")
+            return
+        if not filename.endswith('.fits'):
+            print(f"Warning: {filename} does not have .fits extension, processing anyway...")
+        fits_files.append(filename)
+
+    # Validate ycen_file usage
+    if args.ycen_file and len(fits_files) > 1:
+        print("Error: --ycen-file can only be used with a single input file")
         return
 
-    # Find all FITS files in data directory
-    fits_files = [
-        os.path.join(config.data_dir, f)
-        for f in os.listdir(config.data_dir)
-        if f.endswith(".fits")
-    ]
-
-    if not fits_files:
-        print(f"No FITS files found in {config.data_dir}/!")
+    if args.ycen_file and not os.path.exists(args.ycen_file):
+        print(f"Error: ycen file not found: {args.ycen_file}")
         return
 
-    print(f"Found {len(fits_files)} FITS files to process\n")
+    print(f"Processing {len(fits_files)} FITS file(s)\n")
 
     # Process each file
     results = []
     for fits_file in fits_files:
-        result = process_fits_file(fits_file, config)
+        # Use explicit ycen_file only if processing single file
+        ycen_file_to_use = args.ycen_file if len(fits_files) == 1 else None
+        result = process_fits_file(fits_file, config, ycen_file=ycen_file_to_use)
         if result:
             results.append(result)
 
@@ -808,7 +965,7 @@ def main():
     print("\nSaving results...")
     saved_files = save_results(results, config)
 
-    print(f"\nResults saved to {len(saved_files)} NPZ files")
+    print(f"\nResults saved to {len(saved_files)} NPZ files in {config.data_dir}/")
     print(f"Plots saved to {config.plots_dir}/")
 
 
