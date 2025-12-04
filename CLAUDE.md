@@ -42,7 +42,7 @@ CharSlit is a Python wrapper for the `slitdec` C library, which performs slit de
 **CMakeLists.txt**: The C code is compiled **directly** with the extension module, not as a separate static library:
 ```cmake
 nanobind_add_module(
-  slitchar
+  charslit
   STABLE_ABI
   NB_STATIC
   slitdec/slitdec_wrapper.cpp

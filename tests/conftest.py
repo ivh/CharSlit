@@ -1,4 +1,4 @@
-"""Pytest configuration and fixtures for slitchar tests."""
+"""Pytest configuration and fixtures for charslit tests."""
 
 import numpy as np
 import pytest
@@ -30,7 +30,7 @@ def save_test_data(request):
     Usage in tests:
         @pytest.mark.save_output
         def test_something(self, data, save_test_data):
-            result = slitchar.slitdec(...)
+            result = charslit.slitdec(...)
             save_test_data(data['im'], result['model'],
                           spectrum=result['spectrum'],
                           slitfunction=result['slitfunction'],

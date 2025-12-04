@@ -3,7 +3,7 @@ requires = ["scikit-build-core", "nanobind", "numpy"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "slitchar"
+name = "charslit"
 version = "0.1.0"
 description = "Slit decomposition with slit characterization"
 readme = "README.md"

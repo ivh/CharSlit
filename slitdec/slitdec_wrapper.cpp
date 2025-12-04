@@ -174,7 +174,7 @@ nb::dict slitdec_wrapper(
     return result_dict;
 }
 
-NB_MODULE(slitchar, m) {
+NB_MODULE(charslit, m) {
     m.def("slitdec", &slitdec_wrapper,
           nb::arg("im"),
           nb::arg("pix_unc"),

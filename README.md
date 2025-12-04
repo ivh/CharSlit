@@ -26,7 +26,7 @@ uv pip install -e .
 
 ```python
 import numpy as np
-import slitchar
+import charslit
 
 # Load your spectral image and prepare inputs
 im = ...              # 2D spectral image (nrows, ncols)
@@ -37,7 +37,7 @@ slitcurve = ...       # Curvature coefficients (ncols, 3)
 slitdeltas = ...      # Horizontal offsets (nrows,) - auto-interpolated
 
 # Run decomposition
-result = slitchar.slitdec(
+result = charslit.slitdec(
     im, pix_unc, mask, ycen, slitcurve, slitdeltas,
     osample=6,        # Oversampling factor
     lambda_sP=0.0,    # Spectrum smoothing
