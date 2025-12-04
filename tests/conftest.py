@@ -340,24 +340,31 @@ def real_data_files(request):
     nrows, ncols = im.shape
     osample = 6  # Default oversampling
 
-    # Create ycen - middle of each row (0.5)
-    ycen = np.full(ncols, 0.5)
-
     # Create slitcurve - no curvature
     slitcurve = np.zeros((ncols, 3))
 
     # Calculate ny
     ny = osample * (nrows + 1) + 1
 
-    # Load or create slitdeltas (length nrows - wrapper will interpolate to ny)
+    # Default values
+    slitdeltas = np.zeros(nrows)
+    ycen = np.full(ncols, nrows / 2.0)
+
+    # Load from NPZ if available
     if npz_path.exists():
-        data = np.load(npz_path)
-        slitdeltas = data['median_offsets']
-        # Verify shape matches nrows
-        if slitdeltas.shape[0] != nrows:
-            raise ValueError(f"median_offsets shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
-    else:
-        slitdeltas = np.zeros(nrows)
+        # Use context manager to ensure file is closed
+        with np.load(npz_path) as data:
+            if 'median_offsets' in data:
+                slitdeltas = data['median_offsets']
+                # Verify shape matches nrows
+                if slitdeltas.shape[0] != nrows:
+                    raise ValueError(f"median_offsets shape mismatch: expected {nrows}, got {slitdeltas.shape[0]}")
+            
+            if 'ycen' in data:
+                ycen = data['ycen'].astype(np.float64)
+                # Verify shape matches ncols
+                if ycen.shape[0] != ncols:
+                    raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
 
     # Create pixel uncertainties (assuming Poisson noise)
     pix_unc = np.sqrt(np.abs(im) + 1.0)
