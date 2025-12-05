@@ -906,10 +906,12 @@ def save_results(
         output_file = os.path.join(config.data_dir, f"curvedelta_{basename}.npz")
 
         # Use ycen array if provided, otherwise create from ycen_value
+        # IMPORTANT: slitdec expects ycen in absolute coordinates (nrows/2 + fractional_offset)
+        # not just fractional (0-1) coordinates
         if result["ycen_array"] is not None:
-            ycen = result["ycen_array"]
+            ycen = result["nrows"] / 2.0 + result["ycen_array"]
         else:
-            ycen = np.full(result["ncols"], result["ycen_value"])
+            ycen = np.full(result["ncols"], result["nrows"] / 2.0 + result["ycen_value"])
 
         # Save both slitcurve and slitdeltas
         np.savez(
