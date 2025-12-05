@@ -340,6 +340,10 @@ def real_data_files(request):
     with fits.open(fits_path) as hdul:
         im = hdul[0].data.astype(np.float64)
 
+    # Skip non-2D data (e.g., ycen arrays)
+    if im.ndim != 2:
+        pytest.skip(f"Skipping {fits_path.name}: not a 2D image (shape={im.shape})")
+
     nrows, ncols = im.shape
     osample = 6  # Default oversampling
 
@@ -382,11 +386,30 @@ def real_data_files(request):
                 if ycen.shape[0] != ncols:
                     raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
 
-    # Create pixel uncertainties (assuming Poisson noise)
-    pix_unc = np.sqrt(np.abs(im) + 1.0)
+    # Handle NaN pixels (bad pixels)
+    nan_mask = np.isnan(im)
+    n_nans = nan_mask.sum()
 
-    # Create mask (all valid initially)
+    # Create mask (0=bad, 1=good)
     mask = np.ones(im.shape, dtype=np.uint8)
+    mask[nan_mask] = 0  # Mark NaN pixels as bad
+
+    # Replace NaN pixels with 0 for numerical stability
+    # (the mask will tell slitdec to ignore these pixels)
+    im[nan_mask] = 0.0
+
+    if n_nans > 0:
+        print(f"  {fits_path.name}: Found {n_nans} NaN pixels ({100*n_nans/im.size:.1f}%), marked as bad in mask")
+
+    # Create pixel uncertainties (assuming Poisson noise)
+    # Set uncertainty to large value for bad pixels
+    pix_unc = np.sqrt(np.abs(im) + 1.0)
+    pix_unc[nan_mask] = 1e10  # Large uncertainty for bad pixels
+
+    # Debug: check loaded data
+    print(f"  {fits_path.name}: slitcurve shape={slitcurve.shape}, ycen shape={ycen.shape}, slitdeltas shape={slitdeltas.shape}")
+    print(f"  {fits_path.name}: slitcurve non-zero coeffs: c0={np.sum(np.abs(slitcurve[:,0])>1e-10)}, c1={np.sum(np.abs(slitcurve[:,1])>1e-10)}, c2={np.sum(np.abs(slitcurve[:,2])>1e-10)}")
+    print(f"  {fits_path.name}: ycen range=[{ycen.min():.3f}, {ycen.max():.3f}], mean={ycen.mean():.3f}")
 
     return {
         'im': im,
