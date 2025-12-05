@@ -92,8 +92,8 @@ def plot_curvedelta(
     fig_height = base_height
 
     # Limit figure width to reasonable bounds
-    if fig_width > 20:
-        fig_width = 20
+    if fig_width > 30:
+        fig_width = 30
         fig_height = fig_width / aspect_ratio
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
@@ -158,25 +158,13 @@ def plot_curvedelta(
                 label=f"Interpolated" if idx == plot_indices[0] else None,
             )
 
-    # Add colorbar
     cbar = plt.colorbar(im_plot, ax=ax, label="Intensity")
-
-    # Labels and title
-    basename = os.path.basename(fits_file).replace(".fits", "")
-    ax.set_xlabel("Column (x)")
-    ax.set_ylabel("Row (y)")
-    ax.set_title(
-        f"Slitcurve Visualization - {basename}\n"
-        f"White: pure polynomial, Red dashed: polynomial + residual deltas"
-    )
     ax.legend(loc="upper right", fontsize=8)
-
-    # Set limits
     ax.set_xlim(0, ncols)
     ax.set_ylim(0, nrows)
 
-    # Save plot
     os.makedirs(output_dir, exist_ok=True)
+    basename = os.path.basename(fits_file).replace(".fits", "")
     output_file = os.path.join(output_dir, f"{basename}_slitcurve_overlay.png")
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     plt.close()
