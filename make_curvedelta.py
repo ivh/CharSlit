@@ -234,10 +234,19 @@ def find_and_track_peaks(
     for row_idx in range(num_rows):
         row_data = data[row_idx]
 
+        # Calculate mean, handling masked arrays
+        if np.ma.is_masked(row_data):
+            mean_val = np.ma.mean(row_data)
+            # Convert masked array to regular array for find_peaks (fill masked with mean)
+            row_data_filled = row_data.filled(mean_val)
+        else:
+            mean_val = np.mean(row_data)
+            row_data_filled = row_data
+
         # Find peaks
         peaks, _ = find_peaks(
-            row_data,
-            height=np.mean(row_data) * config.height_multiplier,
+            row_data_filled,
+            height=mean_val * config.height_multiplier,
             distance=config.min_peak_distance,
         )
 
@@ -252,7 +261,7 @@ def find_and_track_peaks(
 
         for peak_idx, peak_loc in enumerate(peaks):
             fitted_pos, fit_params = fit_gaussian_to_peak(
-                x_vals, row_data, peak_loc, config.fit_window_size, config.initial_sigma
+                x_vals, row_data_filled, peak_loc, config.fit_window_size, config.initial_sigma
             )
 
             fitted_positions.append(fitted_pos)
@@ -276,19 +285,21 @@ def find_and_track_peaks(
 
 
 def fit_trajectory_polynomial(
-    trajectory: list[tuple[int, float]], poly_degree: int
+    trajectory: list[tuple[int, float]], poly_degree: int, nrows: int, ycen: float
 ) -> tuple[np.ndarray, dict]:
     """
-    Fit a polynomial x = P(y) to a peak trajectory.
+    Fit a polynomial (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2 to a peak trajectory.
 
     Args:
         trajectory: List of (row_idx, x_position) tuples
         poly_degree: Degree of polynomial to fit
+        nrows: Number of rows in image
+        ycen: Fractional offset (used to compute reference row)
 
     Returns:
         Tuple of (coefficients, fit_info)
-        coefficients: [a0, a1, a2, ...] for x = a0 + a1*y + a2*y^2 + ...
-        fit_info: Dictionary with fit quality metrics
+        coefficients: [a0, a1, a2, ...] for (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+        fit_info: Dictionary with fit quality metrics including x_ref, y_ref
     """
     if len(trajectory) < poly_degree + 1:
         return None, {"fit_failed": True, "reason": "Insufficient data points"}
@@ -297,13 +308,25 @@ def fit_trajectory_polynomial(
     x_positions = np.array([x for _, x in trajectory])
 
     try:
-        # Fit polynomial: x = a0 + a1*y + a2*y^2 + ...
-        coeffs = np.polyfit(rows, x_positions, poly_degree)
+        # Reference point: middle row
+        y_ref = nrows / 2.0 + ycen
+
+        # Find x position at reference row (interpolate if needed)
+        # Use the polynomial fit to get the x position at y_ref
+        # First fit in absolute coordinates to find x_ref
+        coeffs_abs = np.polyfit(rows, x_positions, poly_degree)
+        x_ref = np.polyval(coeffs_abs, y_ref)
+
+        # Now fit centered at reference point: (x - x_ref) vs (y - y_ref)
+        y_centered = rows - y_ref
+        x_centered = x_positions - x_ref
+
+        coeffs = np.polyfit(y_centered, x_centered, poly_degree)
         coeffs = coeffs[::-1]  # Reverse to get [a0, a1, a2, ...]
 
         # Calculate residuals
-        y_fit = np.polyval(coeffs[::-1], rows)
-        residuals = x_positions - y_fit
+        y_fit = np.polyval(coeffs[::-1], y_centered)
+        residuals = x_centered - y_fit
         rms_residual = np.sqrt(np.mean(residuals**2))
 
         # Calculate average column position
@@ -315,6 +338,8 @@ def fit_trajectory_polynomial(
             "rms_residual": rms_residual,
             "max_residual": np.max(np.abs(residuals)),
             "avg_col": avg_col,
+            "x_ref": x_ref,
+            "y_ref": y_ref,
             "row_range": (rows.min(), rows.max()),
             "residuals": residuals,
             "rows": rows,
@@ -384,6 +409,17 @@ def fit_coefficient_interpolation(
     for i in range(3):
         coeff_values = coeffs_array[:, i]
 
+        # a0 (i=0) should be ~0, so don't interpolate it - just set to 0
+        if i == 0:
+            slitcurve[:, 0] = 0.0
+            fit_info["c0_fit"] = {
+                "poly_coeffs": None,
+                "rms_residual": 0.0,
+                "input_points": len(avg_cols),
+                "method": "fixed_zero",
+            }
+            continue
+
         if len(avg_cols) >= poly_degree + 1:
             # Fit polynomial c_i(x)
             poly_coeffs = np.polyfit(avg_cols, coeff_values, poly_degree)
@@ -417,6 +453,7 @@ def fit_coefficient_interpolation(
 def calculate_residual_slitdeltas(
     trajectories: list[list[tuple[int, float]]],
     trajectory_poly_coeffs: list[np.ndarray],
+    trajectory_fit_info: list[dict],
     nrows: int,
 ) -> tuple[np.ndarray, dict]:
     """
@@ -425,6 +462,7 @@ def calculate_residual_slitdeltas(
     Args:
         trajectories: List of peak trajectories
         trajectory_poly_coeffs: List of polynomial coefficients for each trajectory
+        trajectory_fit_info: List of fit info dicts containing x_ref and y_ref
         nrows: Total number of rows
 
     Returns:
@@ -436,15 +474,20 @@ def calculate_residual_slitdeltas(
     residuals_by_row = {row: [] for row in range(nrows)}
 
     # Calculate residuals for each trajectory
-    for traj_idx, (trajectory, poly_coeffs) in enumerate(
-        zip(trajectories, trajectory_poly_coeffs)
+    for traj_idx, (trajectory, poly_coeffs, fit_info) in enumerate(
+        zip(trajectories, trajectory_poly_coeffs, trajectory_fit_info)
     ):
-        if poly_coeffs is None:
+        if poly_coeffs is None or fit_info.get("fit_failed", False):
             continue
 
+        x_ref = fit_info["x_ref"]
+        y_ref = fit_info["y_ref"]
+
         for row, x_measured in trajectory:
-            # Evaluate polynomial at this row
-            x_predicted = np.polyval(poly_coeffs[::-1], row)
+            # Evaluate polynomial: (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+            y_centered = row - y_ref
+            x_offset = np.polyval(poly_coeffs[::-1], y_centered)
+            x_predicted = x_ref + x_offset
 
             # Calculate residual
             residual = x_measured - x_predicted
@@ -578,9 +621,18 @@ def process_fits_file(
     print(f"Processing {filename}...")
     try:
         with fits.open(filename) as hdul:
-            data = hdul[0].data
+            raw_data = hdul[0].data
 
-        nrows, ncols = data.shape
+        nrows, ncols = raw_data.shape
+
+        # Handle NaN values (bad pixels) using masked array
+        nan_mask = np.isnan(raw_data)
+        n_nans = nan_mask.sum()
+        if n_nans > 0:
+            print(f"  Found {n_nans} NaN pixels ({100*n_nans/raw_data.size:.1f}%), using masked array")
+            data = np.ma.masked_array(raw_data, mask=nan_mask)
+        else:
+            data = raw_data
 
         # Load or compute ycen
         ycen_array = None
@@ -609,20 +661,14 @@ def process_fits_file(
                     if ycen_array is not None:
                         print(f"  Loaded ycen from {auto_ycen_fits}")
 
-        # Determine ycen_value for conversion
-        if ycen_array is not None:
-            if len(ycen_array) != ncols:
-                print(f"  Warning: ycen array length {len(ycen_array)} != ncols {ncols}, ignoring")
-                ycen_array = None
-                ycen_value = nrows / 2.0
-            else:
-                # Use median of ycen array for coordinate transformation
-                ycen_value = np.median(ycen_array)
-                print(f"  Using ycen array (median={ycen_value:.1f})")
-        else:
-            # Default: middle row
-            ycen_value = nrows / 2.0
-            print(f"  Using default ycen={ycen_value:.1f}")
+        # Determine ycen_value for polynomial coordinate transformation
+        # NOTE: ycen_value here is the ORDER CENTER in row coordinates (not fractional offset!)
+        # This is used for polynomial fitting: x = c0 + c1*(y - ycen_value) + c2*(y - ycen_value)^2
+        # where y is in row indices (0 to nrows-1)
+        #
+        # The ycen_array (0-1 fractional offsets) is saved separately for slitdec
+        ycen_value = nrows / 2.0  # Always use center row for polynomial reference
+        print(f"  Using order center ycen={ycen_value:.1f} for polynomial fitting")
 
         # Find and track peaks
         peak_positions, all_peak_fits = find_and_track_peaks(data, config)
@@ -643,8 +689,11 @@ def process_fits_file(
         trajectory_poly_coeffs = []
         trajectory_fit_info = []
 
+        # Use ycen=0 so reference is at nrows/2 + 0 = nrows/2
+        ycen_fit = 0.0
+
         for traj_idx, trajectory in enumerate(trajectories):
-            coeffs, fit_info = fit_trajectory_polynomial(trajectory, config.poly_degree)
+            coeffs, fit_info = fit_trajectory_polynomial(trajectory, config.poly_degree, nrows, ycen_fit)
             trajectory_poly_coeffs.append(coeffs)
             trajectory_fit_info.append(fit_info)
 
@@ -654,18 +703,51 @@ def process_fits_file(
                     f"rms_residual={fit_info['rms_residual']:.3f} px"
                 )
 
-        # Convert to slitcurve format
+        # Collect slitcurve coefficients and reference positions with quality filtering
+        # Coefficients are already in the correct format: (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
         slitcurve_coeffs = []
         avg_cols = []
+        x_refs = []
+        y_refs = []
 
+        # Quality filtering thresholds
+        min_points_fraction = 0.8  # Require detection in >80% of rows
+        min_points = int(nrows * min_points_fraction)
+        max_rms = 2.0    # Filter out poor fits
+        min_rms = 0.01   # Filter out suspiciously perfect fits (likely 2-3 points)
+
+        print(f"  Quality filter: requiring >= {min_points} points ({min_points_fraction*100:.0f}% of {nrows} rows)")
+
+        n_filtered = 0
         for coeffs, fit_info in zip(trajectory_poly_coeffs, trajectory_fit_info):
-            if coeffs is not None:
-                sc_coeffs = convert_to_slitcurve_coeffs(coeffs, ycen_value)
-                slitcurve_coeffs.append(sc_coeffs)
-                avg_cols.append(fit_info["avg_col"])
+            if coeffs is None or fit_info.get("fit_failed", False):
+                n_filtered += 1
+                continue
+
+            # Apply quality filters
+            num_points = fit_info.get("num_points", 0)
+            rms = fit_info.get("rms_residual", 999)
+
+            if num_points < min_points:
+                n_filtered += 1
+                continue
+            if rms < min_rms or rms > max_rms:
+                n_filtered += 1
+                continue
+
+            # Good trajectory - keep it
+            slitcurve_coeffs.append(coeffs)
+            avg_cols.append(fit_info["avg_col"])
+            x_refs.append(fit_info["x_ref"])
+            y_refs.append(fit_info["y_ref"])
+
+        if n_filtered > 0:
+            print(f"  Filtered out {n_filtered} low-quality trajectories")
 
         slitcurve_coeffs = np.array(slitcurve_coeffs)
         avg_cols = np.array(avg_cols)
+        x_refs = np.array(x_refs)
+        y_refs = np.array(y_refs)
 
         print(f"  Successfully fit {len(slitcurve_coeffs)} lines")
 
@@ -678,7 +760,7 @@ def process_fits_file(
 
         # Calculate residual slitdeltas
         slitdeltas, delta_diagnostics = calculate_residual_slitdeltas(
-            trajectories, trajectory_poly_coeffs, nrows
+            trajectories, trajectory_poly_coeffs, trajectory_fit_info, nrows
         )
 
         print(
@@ -700,6 +782,8 @@ def process_fits_file(
             "trajectory_fit_info": trajectory_fit_info,
             "slitcurve_coeffs": slitcurve_coeffs,
             "avg_cols": avg_cols,
+            "x_refs": x_refs,
+            "y_refs": y_refs,
             "interp_fit_info": interp_fit_info,
             "delta_diagnostics": delta_diagnostics,
         }
@@ -835,9 +919,11 @@ def save_results(
             slitdeltas=result["slitdeltas"],
             ycen=ycen,
             poly_degree=result["poly_degree"],
-            # Additional diagnostic information
+            # Trajectory fit information (individual emission lines)
             avg_cols=result["avg_cols"],
             slitcurve_coeffs=result["slitcurve_coeffs"],
+            x_refs=result["x_refs"],
+            y_refs=result["y_refs"],
             delta_range=result["delta_diagnostics"]["slitdelta_range"],
         )
         saved_files.append(output_file)

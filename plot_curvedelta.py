@@ -15,35 +15,33 @@ import numpy as np
 from astropy.io import fits
 
 
-def evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows):
+def evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows):
     """
-    Evaluate slitcurve at a given column position.
+    Evaluate a trajectory fit: x = x_ref + a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
 
     Args:
-        x_col: Column position (integer)
-        slitcurve: Array of shape (ncols, 3) with [c0, c1, c2] coefficients
-        ycen_value: Reference y offset (0-1)
+        coeffs: Array [a0, a1, a2] polynomial coefficients
+        x_ref: Reference x position (where the line crosses y_ref)
+        y_ref: Reference y position (usually nrows/2)
         nrows: Number of rows in image
 
     Returns:
-        Tuple of (y_positions, x_positions_curve)
+        Tuple of (y_positions, x_positions)
         y_positions: Array of row indices
-        x_positions_curve: Array of absolute x positions along the curve trajectory
+        x_positions: Array of x positions along the trajectory
     """
-    c0, c1, c2 = slitcurve[x_col]
+    a0, a1, a2 = coeffs
 
     # Evaluate at each row position
     y_positions = np.arange(nrows)
 
-    # Calculate offset from central line for each row
-    # The ycen is a fractional offset within each row, but for plotting
-    # purposes we evaluate the polynomial at integer row positions
-    dy = y_positions - ycen_value
+    # Calculate offset from reference
+    dy = y_positions - y_ref
 
-    # Evaluate full polynomial: x = c0 + c1*dy + c2*dy^2
-    x_offsets = c0 + c1 * dy + c2 * dy**2
+    # Evaluate polynomial: x = x_ref + a0 + a1*dy + a2*dy^2
+    x_positions = x_ref + a0 + a1 * dy + a2 * dy**2
 
-    return y_positions, x_offsets
+    return y_positions, x_positions
 
 
 def plot_curvedelta(
@@ -69,55 +67,96 @@ def plot_curvedelta(
 
     # Load curvedelta results
     data = np.load(curvedelta_file)
-    slitcurve = data["slitcurve"]
-    slitdeltas = data["slitdeltas"]
-    ycen_value = float(data["ycen_value"])
 
-    # Select column positions for plotting (evenly spaced)
-    x_positions = np.linspace(0, ncols - 1, num_lines, dtype=int)
+    # Load raw trajectory fits (individual emission lines)
+    slitcurve_coeffs = data["slitcurve_coeffs"]  # Shape (n_lines, 3)
+    x_refs = data["x_refs"]  # Shape (n_lines,)
+    y_refs = data["y_refs"]  # Shape (n_lines,)
 
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # Load interpolated slitcurve for comparison
+    slitcurve = data["slitcurve"]  # Shape (ncols, 3)
+
+    n_trajectories = len(x_refs)
+
+    # Select which trajectories to plot (evenly spaced, or all if num_lines >= n_trajectories)
+    if num_lines >= n_trajectories:
+        plot_indices = np.arange(n_trajectories)
+    else:
+        plot_indices = np.linspace(0, n_trajectories - 1, num_lines, dtype=int)
+
+    # Create plot with aspect ratio matching image (square pixels)
+    # Calculate figsize to maintain square pixels
+    aspect_ratio = ncols / nrows
+    base_height = 8  # inches
+    fig_width = base_height * aspect_ratio
+    fig_height = base_height
+
+    # Limit figure width to reasonable bounds
+    if fig_width > 20:
+        fig_width = 20
+        fig_height = fig_width / aspect_ratio
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    # Calculate vmin/vmax from percentiles for better contrast
+    # Handle NaN values if present
+    valid_pixels = im[~np.isnan(im)] if np.any(np.isnan(im)) else im.flatten()
+    vmin = np.percentile(valid_pixels, 10)
+    vmax = np.percentile(valid_pixels, 90)
 
     # Plot image as background
     im_plot = ax.imshow(
         im,
         origin="lower",
         cmap="viridis",
-        aspect="auto",
+        aspect="equal",  # Changed from "auto" to "equal" for square pixels
         extent=[0, ncols, 0, nrows],
+        vmin=vmin,
+        vmax=vmax,
     )
 
-    # Plot slitcurves at selected positions
-    for x_col in x_positions:
-        y_positions, x_positions_curve = evaluate_slitcurve(x_col, slitcurve, ycen_value, nrows)
+    # Plot fitted trajectories (individual emission lines) in red
+    for idx in plot_indices:
+        coeffs = slitcurve_coeffs[idx]
+        x_ref = x_refs[idx]
+        y_ref = y_refs[idx]
 
-        # Curve position (absolute x positions from polynomial)
-        x_curve = x_positions_curve
+        # Evaluate the trajectory fit
+        y_positions, x_positions = evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows)
 
-        # Plot pure slitcurve (no deltas)
+        # Plot the fitted trajectory
         ax.plot(
-            x_curve,
-            y_positions,
-            color="white",
-            linewidth=1.5,
-            alpha=0.8,
-            label=f"Slitcurve @ x={x_col}" if x_col == x_positions[0] else None,
-        )
-
-        # Plot slitcurve + slitdeltas
-        x_curve_with_delta = x_curve + slitdeltas
-        ax.plot(
-            x_curve_with_delta,
+            x_positions,
             y_positions,
             color="red",
             linewidth=1.5,
-            alpha=0.8,
-            linestyle="--",
-            label=f"Slitcurve + deltas @ x={x_col}"
-            if x_col == x_positions[0]
-            else None,
+            alpha=0.7,
+            label=f"Fitted lines" if idx == plot_indices[0] else None,
         )
+
+    # Plot interpolated slitcurve at the same x_refs in white dashed
+    for idx in plot_indices:
+        x_ref = x_refs[idx]
+        y_ref = y_refs[idx]
+
+        # Get interpolated coefficients at this x_ref position
+        x_col = int(np.round(x_ref))
+        if 0 <= x_col < ncols:
+            interp_coeffs = slitcurve[x_col]  # [a0=0, a1, a2]
+
+            # Evaluate the interpolated curve
+            y_positions, x_positions_interp = evaluate_trajectory_fit(interp_coeffs, x_ref, y_ref, nrows)
+
+            # Plot the interpolated curve
+            ax.plot(
+                x_positions_interp,
+                y_positions,
+                color="white",
+                linewidth=1.0,
+                alpha=0.8,
+                linestyle="--",
+                label=f"Interpolated" if idx == plot_indices[0] else None,
+            )
 
     # Add colorbar
     cbar = plt.colorbar(im_plot, ax=ax, label="Intensity")

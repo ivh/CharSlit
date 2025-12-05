@@ -29,6 +29,94 @@ CharSlit is a Python wrapper for the `slitdec` C library, which performs slit de
 - Describes the horizontal offset of the slit as a function of vertical position
 - Should trace the curvature of the spectral order visible in the data
 
+## make_curvedelta.py: Trajectory Fitting and Coordinate Systems
+
+### Overview
+
+The `make_curvedelta.py` script analyzes FITS images to extract:
+1. Individual spectral line trajectories (emission lines)
+2. Polynomial fits describing their curvature
+3. Interpolated slitcurve coefficients for all columns
+4. Residual slitdeltas after removing polynomial curvature
+
+### Coordinate System for Polynomial Fitting
+
+**Reference Point:**
+- y_ref = nrows/2 + ycen, where ycen is typically 0
+- For an image with 176 rows: y_ref = 88.0
+- x_ref = the column position where a spectral line crosses y_ref
+
+**Polynomial Form:**
+Each detected spectral line is fitted as:
+```
+x = x_ref + a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+```
+
+Where:
+- `x` = column position (horizontal)
+- `y` = row index (vertical, 0 to nrows-1)
+- `x_ref` = reference column position (where line crosses middle row)
+- `y_ref` = reference row (typically nrows/2)
+- `a0, a1, a2` = polynomial coefficients
+
+**Important:** In practice, `a0 ≈ 0` (just numerical noise ~1e-14) because the polynomial is centered at x_ref by construction.
+
+### Quality Filtering
+
+Trajectories are filtered to ensure quality:
+- **Minimum row coverage**: Must be detected in >80% of rows (e.g., >140 points for 176 rows)
+- **RMS residual range**: 0.01 < RMS < 2.0 pixels
+  - Filters out suspiciously perfect fits (likely 2-3 noise peaks)
+  - Filters out poor fits (large deviations)
+
+### Coefficient Interpolation
+
+After fitting individual trajectories, coefficients are interpolated across all columns:
+
+**Method:**
+- `a0` is **fixed to 0** (not interpolated) - slit shape doesn't change rapidly
+- `a1(x)` and `a2(x)` are interpolated as polynomial functions of column position
+- Result: `slitcurve[x] = [0, c1(x), c2(x)]`
+
+**Verification:**
+Evaluating the interpolated slitcurve at the original x_ref positions should reproduce the original fitted trajectories. This is verified by plotting both:
+- Red lines: Direct fits to detected emission lines
+- White dashed lines: Interpolated slitcurve at the same x_ref positions
+
+These should overlay almost perfectly if interpolation is working correctly.
+
+### Important Distinction: ycen for Fitting vs slitdec
+
+**For make_curvedelta.py (polynomial fitting):**
+- Uses y_ref = nrows/2 in absolute row coordinates
+- This is the center row of the detector
+
+**For slitdec (the C library):**
+- Uses ycen array with fractional offsets (0-1 range)
+- These are sub-pixel offsets within each row
+- Saved separately in the curvedelta NPZ file
+
+**These are different things!** Don't confuse the reference row for fitting (absolute coordinates) with the fractional ycen offsets for slitdec.
+
+### Output Files
+
+The `curvedelta_{basename}.npz` files contain:
+- `slitcurve`: Interpolated coefficients, shape (ncols, 3), with slitcurve[:,0] = 0
+- `slitdeltas`: Residual offsets after removing polynomial, shape (nrows,)
+- `ycen`: Fractional offsets for slitdec, shape (ncols,)
+- `slitcurve_coeffs`: Raw trajectory coefficients, shape (n_good_lines, 3)
+- `x_refs`: Reference x positions for each trajectory, shape (n_good_lines,)
+- `y_refs`: Reference y positions for each trajectory, shape (n_good_lines,)
+- `avg_cols`: Average column position for each trajectory
+
+### Masked Array Support for NaN Handling
+
+The script handles NaN pixels (bad pixels) using numpy masked arrays:
+- Detects NaN pixels and creates `np.ma.masked_array`
+- Uses `np.ma.mean()` for masked-aware statistics
+- Fills masked values with mean for `find_peaks` and Gaussian fitting
+- Preserves good data while handling bad pixels gracefully
+
 ## Build System
 
 ### Technology Stack
