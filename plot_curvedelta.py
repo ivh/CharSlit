@@ -14,34 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 
-
-def evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows):
-    """
-    Evaluate a trajectory fit: x = x_ref + a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
-
-    Args:
-        coeffs: Array [a0, a1, a2] polynomial coefficients
-        x_ref: Reference x position (where the line crosses y_ref)
-        y_ref: Reference y position (usually nrows/2)
-        nrows: Number of rows in image
-
-    Returns:
-        Tuple of (y_positions, x_positions)
-        y_positions: Array of row indices
-        x_positions: Array of x positions along the trajectory
-    """
-    a0, a1, a2 = coeffs
-
-    # Evaluate at each row position
-    y_positions = np.arange(nrows)
-
-    # Calculate offset from reference
-    dy = y_positions - y_ref
-
-    # Evaluate polynomial: x = x_ref + a0 + a1*dy + a2*dy^2
-    x_positions = x_ref + a0 + a1 * dy + a2 * dy**2
-
-    return y_positions, x_positions
+from slitcurve_plotting import overlay_slitcurve_trajectories
 
 
 def plot_curvedelta(
@@ -66,23 +39,7 @@ def plot_curvedelta(
     nrows, ncols = im.shape
 
     # Load curvedelta results
-    data = np.load(curvedelta_file)
-
-    # Load raw trajectory fits (individual emission lines)
-    slitcurve_coeffs = data["slitcurve_coeffs"]  # Shape (n_lines, 3)
-    x_refs = data["x_refs"]  # Shape (n_lines,)
-    y_refs = data["y_refs"]  # Shape (n_lines,)
-
-    # Load interpolated slitcurve for comparison
-    slitcurve = data["slitcurve"]  # Shape (ncols, 3)
-
-    n_trajectories = len(x_refs)
-
-    # Select which trajectories to plot (evenly spaced, or all if num_lines >= n_trajectories)
-    if num_lines >= n_trajectories:
-        plot_indices = np.arange(n_trajectories)
-    else:
-        plot_indices = np.linspace(0, n_trajectories - 1, num_lines, dtype=int)
+    slitcurve_data = dict(np.load(curvedelta_file))
 
     # Create plot with aspect ratio matching image (square pixels)
     # Calculate figsize to maintain square pixels
@@ -115,48 +72,16 @@ def plot_curvedelta(
         vmax=vmax,
     )
 
-    # Plot fitted trajectories (individual emission lines) in red
-    for idx in plot_indices:
-        coeffs = slitcurve_coeffs[idx]
-        x_ref = x_refs[idx]
-        y_ref = y_refs[idx]
-
-        # Evaluate the trajectory fit
-        y_positions, x_positions = evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows)
-
-        # Plot the fitted trajectory
-        ax.plot(
-            x_positions,
-            y_positions,
-            color="red",
-            linewidth=1.5,
-            alpha=0.7,
-            label=f"Fitted lines" if idx == plot_indices[0] else None,
-        )
-
-    # Plot interpolated slitcurve at the same x_refs in white dashed
-    for idx in plot_indices:
-        x_ref = x_refs[idx]
-        y_ref = y_refs[idx]
-
-        # Get interpolated coefficients at this x_ref position
-        x_col = int(np.round(x_ref))
-        if 0 <= x_col < ncols:
-            interp_coeffs = slitcurve[x_col]  # [a0=0, a1, a2]
-
-            # Evaluate the interpolated curve
-            y_positions, x_positions_interp = evaluate_trajectory_fit(interp_coeffs, x_ref, y_ref, nrows)
-
-            # Plot the interpolated curve
-            ax.plot(
-                x_positions_interp,
-                y_positions,
-                color="white",
-                linewidth=1.0,
-                alpha=0.8,
-                linestyle="--",
-                label=f"Interpolated" if idx == plot_indices[0] else None,
-            )
+    # Overlay slitcurve trajectories using shared function
+    overlay_slitcurve_trajectories(
+        ax,
+        nrows,
+        ncols,
+        slitcurve_data,
+        num_lines=num_lines,
+        show_fitted=True,
+        show_interpolated=True,
+    )
 
     cbar = plt.colorbar(im_plot, ax=ax, label="Intensity")
     ax.legend(loc="upper right", fontsize=8)

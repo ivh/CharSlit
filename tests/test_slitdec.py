@@ -585,4 +585,5 @@ class TestRealData:
             spectrum=result["spectrum"],
             slitfunction=result["slitfunction"],
             uncertainty=result["uncertainty"],
+            slitcurve_data=data["slitcurve_data"],
         )

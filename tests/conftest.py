@@ -1,14 +1,21 @@
 """Pytest configuration and fixtures for charslit tests."""
 
+import sys
+from pathlib import Path
+
+# Add parent directory to path so we can import slitcurve_plotting
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import numpy as np
 import pytest
-from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for testing
 import matplotlib.pyplot as plt
 from astropy.io import fits
 import glob
 import warnings
+
+from slitcurve_plotting import overlay_slitcurve_trajectories
 
 
 def pytest_configure(config):
@@ -76,65 +83,128 @@ def save_test_data(request):
         np.savez(npz_filename, **save_dict)
         print(f"\nSaved test data to: {npz_filename}")
 
-        # Create 5-panel plot with fixed positions to prevent movement
-        # Top row: 3 equal panels (input, model, difference)
-        # Bottom row: 2 panels with 2:1 ratio (spectrum, slit function)
-        fig = plt.figure(figsize=(15, 7.5))
-
         # Calculate difference
         diff = im - model
 
-        # Define fixed positions [left, bottom, width, height] in figure coordinates
-        # Top row (height 2/3 of plotting area)
-        top_height = 0.50
-        bottom_height = 0.25
-        vertical_gap = 0.08
-        top_bottom = 0.08 + bottom_height + vertical_gap
+        # Calculate percentile limits for color scaling
+        im_vmin = np.nanpercentile(im, 10)
+        im_vmax = np.nanpercentile(im, 90)
+        diff_vmin = np.nanpercentile(diff, 5)
+        diff_vmax = np.nanpercentile(diff, 95)
 
-        # Horizontal positions for 3 panels in top row
-        panel_width = 0.26
-        colorbar_width = 0.015
-        h_gap = 0.04
-        left_margin = 0.06
+        # Check aspect ratio to determine layout
+        nrows, ncols = im.shape
+        aspect_ratio = ncols / nrows
+        wide_image = aspect_ratio > 3
 
-        pos1 = [left_margin, top_bottom, panel_width, top_height]
-        pos2 = [left_margin + panel_width + h_gap, top_bottom, panel_width, top_height]
-        pos3 = [left_margin + 2*(panel_width + h_gap), top_bottom, panel_width, top_height]
+        if wide_image:
+            # Vertical layout for wide images: each image panel gets its own row
+            fig = plt.figure(figsize=(14, 9))
 
-        # Bottom row positions
-        bottom_left_width = 2 * panel_width + h_gap
-        bottom_right_width = panel_width
-        pos4 = [left_margin, 0.08, bottom_left_width, bottom_height]
-        pos5 = [left_margin + bottom_left_width + h_gap, 0.08, bottom_right_width, bottom_height]
+            # Define positions [left, bottom, width, height]
+            img_panel_width = 0.80
+            img_panel_height = 0.12
+            colorbar_width = 0.015
+            left_margin = 0.06
+            vertical_gap = 0.015
 
-        # Top row - Panel 1: Input image
+            # Three image panels stacked vertically, starting higher
+            top_start = 0.74
+            pos1 = [left_margin, top_start, img_panel_width, img_panel_height]
+            pos2 = [left_margin, top_start - img_panel_height - vertical_gap, img_panel_width, img_panel_height]
+            pos3 = [left_margin, top_start - 2*(img_panel_height + vertical_gap), img_panel_width, img_panel_height]
+
+            # Bottom row positions (spectrum and slit function)
+            bottom_height = 0.20
+            bottom_gap = 0.04
+            bottom_left_width = 0.52
+            bottom_right_width = 0.28
+            pos4 = [left_margin, 0.06, bottom_left_width, bottom_height]
+            pos5 = [left_margin + bottom_left_width + bottom_gap, 0.06, bottom_right_width, bottom_height]
+        else:
+            # Horizontal layout for normal images: 3 panels in top row
+            fig = plt.figure(figsize=(15, 7.5))
+
+            # Define fixed positions [left, bottom, width, height] in figure coordinates
+            top_height = 0.50
+            bottom_height = 0.25
+            vertical_gap = 0.08
+            top_bottom = 0.08 + bottom_height + vertical_gap
+
+            # Horizontal positions for 3 panels in top row
+            panel_width = 0.26
+            colorbar_width = 0.015
+            h_gap = 0.04
+            left_margin = 0.06
+
+            pos1 = [left_margin, top_bottom, panel_width, top_height]
+            pos2 = [left_margin + panel_width + h_gap, top_bottom, panel_width, top_height]
+            pos3 = [left_margin + 2*(panel_width + h_gap), top_bottom, panel_width, top_height]
+
+            # Bottom row positions
+            bottom_left_width = 2 * panel_width + h_gap
+            bottom_right_width = panel_width
+            pos4 = [left_margin, 0.08, bottom_left_width, bottom_height]
+            pos5 = [left_margin + bottom_left_width + h_gap, 0.08, bottom_right_width, bottom_height]
+
+        # Panel 1: Input image with percentile scaling (no colorbar)
         ax1 = fig.add_axes(pos1)
-        im1 = ax1.imshow(im, cmap='viridis', aspect='auto')
+        im1 = ax1.imshow(im, cmap='viridis', aspect='equal', vmin=im_vmin, vmax=im_vmax,
+                         origin='lower', extent=[0, ncols, 0, nrows])
         ax1.set_title('Input Image')
         ax1.set_xticks([])
         ax1.set_yticks([])
-        cax1 = fig.add_axes([pos1[0] + pos1[2] + 0.005, pos1[1], colorbar_width, pos1[3]])
-        fig.colorbar(im1, cax=cax1, label='Intensity')
 
-        # Top row - Panel 2: Model
+        # Panel 2: Model with same scaling as input (no colorbar)
         ax2 = fig.add_axes(pos2)
-        im2 = ax2.imshow(model, cmap='viridis', aspect='auto')
+        im2 = ax2.imshow(model, cmap='viridis', aspect='equal', vmin=im_vmin, vmax=im_vmax,
+                         origin='lower', extent=[0, ncols, 0, nrows])
         ax2.set_title('Model')
         ax2.set_xticks([])
         ax2.set_yticks([])
-        cax2 = fig.add_axes([pos2[0] + pos2[2] + 0.005, pos2[1], colorbar_width, pos2[3]])
-        fig.colorbar(im2, cax=cax2, label='Intensity')
 
-        # Top row - Panel 3: Difference (im - model)
+        # Panel 3: Difference with percentile scaling (with colorbar matching image height)
         ax3 = fig.add_axes(pos3)
-        vmax_diff = np.max(np.abs(diff))
-        im3 = ax3.imshow(diff, cmap='seismic', aspect='auto',
-                         vmin=-vmax_diff, vmax=vmax_diff)
+        im3 = ax3.imshow(diff, cmap='bwr', aspect='equal', vmin=diff_vmin, vmax=diff_vmax,
+                         origin='lower', extent=[0, ncols, 0, nrows])
         ax3.set_title('Difference (Input - Model)')
         ax3.set_xticks([])
         ax3.set_yticks([])
-        cax3 = fig.add_axes([pos3[0] + pos3[2] + 0.005, pos3[1], colorbar_width, pos3[3]])
+
+        # Colorbar positioned to match the actual image height in the axes
+        # Get the axes position in display coordinates to calculate image bounds
+        bbox = ax3.get_position()
+        img_aspect = nrows / ncols
+        if img_aspect < bbox.height / bbox.width:
+            # Image is limited by width, centered vertically
+            img_height_frac = (bbox.width * img_aspect) / bbox.height
+            cbar_bottom = bbox.y0 + bbox.height * (1 - img_height_frac) / 2
+            cbar_height = bbox.height * img_height_frac
+        else:
+            # Image is limited by height
+            cbar_bottom = bbox.y0
+            cbar_height = bbox.height
+
+        cax3 = fig.add_axes([bbox.x0 + bbox.width + 0.005, cbar_bottom, colorbar_width, cbar_height])
         fig.colorbar(im3, cax=cax3, label='Residual')
+
+        # Overlay slitcurve trajectories if available
+        if 'slitcurve_data' in extra_arrays:
+            slitcurve_data = extra_arrays['slitcurve_data']
+            # Overlay on all three image panels
+            for ax in [ax1, ax2, ax3]:
+                overlay_slitcurve_trajectories(
+                    ax,
+                    nrows,
+                    ncols,
+                    slitcurve_data,
+                    num_lines=5,
+                    show_fitted=True,
+                    show_interpolated=True,
+                )
+                # Set axis limits to match image extent
+                ax.set_xlim(0, ncols)
+                ax.set_ylim(0, nrows)
 
         # Bottom row - Panel 4: Spectrum (spans 2/3 width)
         if 'spectrum' in extra_arrays and 'uncertainty' in extra_arrays:
@@ -386,6 +456,21 @@ def real_data_files(request):
                 if ycen.shape[0] != ncols:
                     raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
 
+    # Create slitcurve_data dictionary for plotting
+    # Always include slitcurve and slitdeltas
+    slitcurve_data = {
+        'slitcurve': slitcurve,
+        'slitdeltas': slitdeltas,
+    }
+
+    # Add trajectory data if available (from curvedelta file)
+    if curvedelta_path.exists():
+        with np.load(curvedelta_path) as data:
+            if 'slitcurve_coeffs' in data and 'x_refs' in data and 'y_refs' in data:
+                slitcurve_data['slitcurve_coeffs'] = data['slitcurve_coeffs']
+                slitcurve_data['x_refs'] = data['x_refs']
+                slitcurve_data['y_refs'] = data['y_refs']
+
     # Handle NaN pixels (bad pixels)
     nan_mask = np.isnan(im)
     n_nans = nan_mask.sum()
@@ -422,5 +507,6 @@ def real_data_files(request):
         'ncols': ncols,
         'osample': osample,
         'ny': ny,
-        'filename': fits_path.name
+        'filename': fits_path.name,
+        'slitcurve_data': slitcurve_data,
     }
