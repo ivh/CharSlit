@@ -18,6 +18,10 @@ if(NOT NB_RESULT EQUAL 0)
 endif()
 
 list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
+
+# Use nanobind's bundled submodule dependencies (tsl-robin-map)
+set(NB_USE_SUBMODULE_DEPS ON)
+
 find_package(nanobind CONFIG REQUIRED)
 
 # Create nanobind extension module
