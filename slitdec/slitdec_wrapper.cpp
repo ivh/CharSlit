@@ -184,7 +184,7 @@ NB_MODULE(charslit, m) {
           nb::arg("slitdeltas"),
           nb::arg("osample") = 6,
           nb::arg("lambda_sP") = 0.0,
-          nb::arg("lambda_sL") = 0.1,
+          nb::arg("lambda_sL") = 1.0,
           nb::arg("maxiter") = 20,
           "Slit decomposition with slit characterization\n\n"
           "Parameters\n"

@@ -91,16 +91,12 @@ def overlay_slitcurve_trajectories(
         y_refs = slitcurve_data["y_refs"]
         n_trajectories = len(x_refs)
 
-        # Select which trajectories to plot (evenly spaced)
-        if num_lines >= n_trajectories:
-            plot_indices = np.arange(n_trajectories)
-        else:
-            plot_indices = np.linspace(0, n_trajectories - 1, num_lines, dtype=int)
-
-        x_positions_to_plot = x_refs[plot_indices]
-        y_positions_to_plot = y_refs[plot_indices]
+        # Use all fitted trajectories (ignore num_lines)
+        plot_indices = np.arange(n_trajectories)
+        x_positions_to_plot = x_refs
+        y_positions_to_plot = y_refs
     else:
-        # No fitted trajectories, use evenly spaced vertical lines
+        # No fitted trajectories, use num_lines evenly spaced vertical lines
         plot_indices = np.linspace(0, ncols - 1, num_lines, dtype=int)
         x_positions_to_plot = plot_indices.astype(float)
         y_positions_to_plot = np.full(len(plot_indices), nrows / 2.0)

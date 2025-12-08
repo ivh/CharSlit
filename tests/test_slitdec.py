@@ -479,7 +479,7 @@ class TestDefaultParameters:
             data["slitdeltas"],
             osample=6,
             lambda_sP=0.0,
-            lambda_sL=0.1,
+            lambda_sL=1.0,
             maxiter=20,
         )
 
