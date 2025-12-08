@@ -288,17 +288,20 @@ def fit_trajectory_polynomial(
     trajectory: list[tuple[int, float]], poly_degree: int, nrows: int, ycen: float
 ) -> tuple[np.ndarray, dict]:
     """
-    Fit a polynomial (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2 to a peak trajectory.
+    Fit a polynomial (x - x_ref) = a0 + a1*y + a2*y^2 to a peak trajectory.
+
+    The polynomial is centered at y=0 (row index 0) because the C code slitdec
+    evaluates delta = c1*(dy - ycen) + c2*(dy - ycen)^2 where (dy - ycen) ≈ y.
 
     Args:
         trajectory: List of (row_idx, x_position) tuples
         poly_degree: Degree of polynomial to fit
         nrows: Number of rows in image
-        ycen: Fractional offset (used to compute reference row)
+        ycen: Fractional offset (not used for centering, kept for API compatibility)
 
     Returns:
         Tuple of (coefficients, fit_info)
-        coefficients: [a0, a1, a2, ...] for (x - x_ref) = a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+        coefficients: [a0, a1, a2, ...] for (x - x_ref) = a0 + a1*y + a2*y^2
         fit_info: Dictionary with fit quality metrics including x_ref, y_ref
     """
     if len(trajectory) < poly_degree + 1:
@@ -308,24 +311,23 @@ def fit_trajectory_polynomial(
     x_positions = np.array([x for _, x in trajectory])
 
     try:
-        # Reference point: middle row
-        y_ref = nrows / 2.0 + ycen
+        # Reference point: y=0 (row index 0)
+        # This matches the C code which computes (dy - ycen) ≈ y
+        y_ref = 0.0
 
-        # Find x position at reference row (interpolate if needed)
-        # Use the polynomial fit to get the x position at y_ref
-        # First fit in absolute coordinates to find x_ref
+        # Find x position at y=0 (extrapolate)
         coeffs_abs = np.polyfit(rows, x_positions, poly_degree)
         x_ref = np.polyval(coeffs_abs, y_ref)
 
-        # Now fit centered at reference point: (x - x_ref) vs (y - y_ref)
-        y_centered = rows - y_ref
+        # Fit centered at y=0: (x - x_ref) vs y
+        # Since y_ref = 0, y_centered = rows - 0 = rows
         x_centered = x_positions - x_ref
 
-        coeffs = np.polyfit(y_centered, x_centered, poly_degree)
+        coeffs = np.polyfit(rows, x_centered, poly_degree)
         coeffs = coeffs[::-1]  # Reverse to get [a0, a1, a2, ...]
 
         # Calculate residuals
-        y_fit = np.polyval(coeffs[::-1], y_centered)
+        y_fit = np.polyval(coeffs[::-1], rows)
         residuals = x_centered - y_fit
         rms_residual = np.sqrt(np.mean(residuals**2))
 
@@ -911,7 +913,12 @@ def save_results(
         if result["ycen_array"] is not None:
             ycen = result["nrows"] / 2.0 + result["ycen_array"]
         else:
-            ycen = np.full(result["ncols"], result["nrows"] / 2.0 + result["ycen_value"])
+            ycen = np.full(result["ncols"], result["nrows"] / 2.0 + config.ycen_value)
+
+        # The slitcurve coefficients are already in the correct format for the C code
+        # Polynomial: delta = c0 + c1*y + c2*y^2 where y is the row index
+        # C code computes: delta = c1*(dy - ycen) + c2*(dy - ycen)^2 where (dy - ycen) ≈ y
+        # Note: c0 should be ~0 since the polynomial is centered at y=0
 
         # Save both slitcurve and slitdeltas
         np.savez(

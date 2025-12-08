@@ -42,24 +42,22 @@ The `make_curvedelta.py` script analyzes FITS images to extract:
 ### Coordinate System for Polynomial Fitting
 
 **Reference Point:**
-- y_ref = nrows/2 + ycen, where ycen is typically 0
-- For an image with 176 rows: y_ref = 88.0
-- x_ref = the column position where a spectral line crosses y_ref
+- y_ref = 0 (row index 0, bottom of image)
+- This matches the C code which evaluates `delta = c1*(dy - ycen) + c2*(dy - ycen)^2` where `(dy - ycen) ≈ y` (approximately the row index)
 
 **Polynomial Form:**
 Each detected spectral line is fitted as:
 ```
-x = x_ref + a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+x = x_ref + a0 + a1*y + a2*y^2
 ```
 
 Where:
 - `x` = column position (horizontal)
 - `y` = row index (vertical, 0 to nrows-1)
-- `x_ref` = reference column position (where line crosses middle row)
-- `y_ref` = reference row (typically nrows/2)
+- `x_ref` = reference column position (extrapolated to y=0)
 - `a0, a1, a2` = polynomial coefficients
 
-**Important:** In practice, `a0 ≈ 0` (just numerical noise ~1e-14) because the polynomial is centered at x_ref by construction.
+**Important:** `a0 ≈ 0` because the polynomial is centered at x_ref by construction. The C code only uses c1 and c2 (ignores c0).
 
 ### Quality Filtering
 
@@ -74,7 +72,7 @@ Trajectories are filtered to ensure quality:
 After fitting individual trajectories, coefficients are interpolated across all columns:
 
 **Method:**
-- `a0` is **fixed to 0** (not interpolated) - slit shape doesn't change rapidly
+- `a0` is **fixed to 0** (not interpolated) - C code ignores this anyway
 - `a1(x)` and `a2(x)` are interpolated as polynomial functions of column position
 - Result: `slitcurve[x] = [0, c1(x), c2(x)]`
 
@@ -85,18 +83,16 @@ Evaluating the interpolated slitcurve at the original x_ref positions should rep
 
 These should overlay almost perfectly if interpolation is working correctly.
 
-### Important Distinction: ycen for Fitting vs slitdec
+### ycen Values
 
-**For make_curvedelta.py (polynomial fitting):**
-- Uses y_ref = nrows/2 in absolute row coordinates
-- This is the center row of the detector
+**What ycen represents:**
+- The ABSOLUTE row position of the order center (e.g., 88.5 for a 176-row image)
+- The C code extracts: `ycen_offset = floor(ycen)` (integer row) and `ycen_frac = ycen - floor(ycen)` (fractional offset 0-1)
 
-**For slitdec (the C library):**
-- Uses ycen array with fractional offsets (0-1 range)
-- These are sub-pixel offsets within each row
-- Saved separately in the curvedelta NPZ file
-
-**These are different things!** Don't confuse the reference row for fitting (absolute coordinates) with the fractional ycen offsets for slitdec.
+**How the C code uses ycen:**
+- `ycen_offset` is used for row alignment between columns
+- `ycen_frac` is used in the polynomial evaluation: `delta = c1*(dy - ycen_frac) + c2*(dy - ycen_frac)^2`
+- Since `dy ≈ row_index` and `ycen_frac ≈ 0.5`, we have `(dy - ycen_frac) ≈ row_index`
 
 ### Output Files
 
@@ -302,19 +298,20 @@ Currently 4 marked tests (8 total with parametrization):
 
 The `real_data_files` fixture (tests/conftest.py):
 1. Loads all FITS files from `data/*.fits`
-2. Looks for corresponding `slitdeltas_{basename}.npz` files
-3. Loads `median_offsets` array from NPZ (length nrows)
+2. Looks for corresponding `curvedelta_{basename}.npz` (preferred) or `slitdeltas_{basename}.npz` files
+3. Loads `slitcurve`, `slitdeltas`, and `ycen` from NPZ
 4. Wrapper automatically interpolates slitdeltas from nrows → ny before passing to C
 5. Falls back to zeros if NPZ doesn't exist
-6. Hardcodes: `ycen=0.5` (middle of row), `slitcurve=zeros` (no curvature)
-7. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
+6. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
+7. Marks NaN pixels as bad in mask (fully masked columns now handled by C code regularization)
 
-Currently 5 real data files:
+Currently 6 real data files:
 - `Hsim.fits` (90×53)
 - `Rsim.fits` (140×84)
 - `discontinuous.fits` (100×150)
 - `fixedslope.fits` (100×150)
 - `multislope.fits` (100×150)
+- `CRIRES1.fits` (176×2048) - has fully NaN columns
 
 ## Common Issues and Solutions
 
@@ -336,6 +333,15 @@ Currently 5 real data files:
 **Cause**: `delta_x` calculation didn't include slitdeltas, causing insufficient memory allocation.
 
 **Solution**: Add slitdeltas to delta_x calculation (see "Critical Implementation Detail" above).
+
+### Issue: All spectrum values NaN with masked columns
+**Symptom**: Masking an entire column causes ALL spectrum values to become NaN.
+
+**Cause**: When a column is fully masked, the corresponding row of the banded matrix has zero diagonal, causing division by zero in the solver.
+
+**Fix**: Added regularization in `slitdec.c` (after matrix construction, before `bandsol`) that ensures no diagonal is less than 1e-10 times the maximum diagonal. This prevents division by zero while giving masked columns a spectrum value of ~0.
+
+**Note**: Columns with no valid data will have spectrum value ~0, which is sensible. The regularization is applied to both the spectrum (p_Aij) and slit function (l_Aij) matrices.
 
 ### Issue: Old binary loads after code changes
 **Symptom**: Changes to C code don't take effect

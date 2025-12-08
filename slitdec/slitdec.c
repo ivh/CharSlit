@@ -1061,6 +1061,25 @@ int slitdec(        int ncols,
         l_Aij[laij_index(ny - 1, 2 * osample - 1)] -= lambda; /* Lower diagonal */
         l_Aij[laij_index(ny - 1, 2 * osample)] += lambda;     /* Main diagonal  */
 
+        /* Regularize diagonal to prevent singular matrix from fully masked rows */
+        {
+            double max_diag = 0.0;
+            for (iy = 0; iy < ny; iy++)
+            {
+                if (l_Aij[laij_index(iy, 2 * osample)] > max_diag)
+                    max_diag = l_Aij[laij_index(iy, 2 * osample)];
+            }
+            if (max_diag > 0.0)
+            {
+                double min_diag = max_diag * 1.0e-10;
+                for (iy = 0; iy < ny; iy++)
+                {
+                    if (l_Aij[laij_index(iy, 2 * osample)] < min_diag)
+                        l_Aij[laij_index(iy, 2 * osample)] = min_diag;
+                }
+            }
+        }
+
         /* Solve the system of equations */
         bandsol(l_Aij, l_bj, MAX_LAIJ_X, MAX_LAIJ_Y);
 
@@ -1132,6 +1151,29 @@ int slitdec(        int ncols,
             }
             p_Aij[paij_index(ncols - 1, 2 * delta_x - 1)] -= lambda; /* Lower diagonal */
             p_Aij[paij_index(ncols - 1, 2 * delta_x)] += lambda;     /* Main diagonal  */
+        }
+
+        /* Regularize diagonal to prevent singular matrix from fully masked columns.
+           When a column has no valid data (all pixels masked), the corresponding
+           row of the matrix is zero, causing division by zero in bandsol.
+           We add a small regularization to the diagonal to make it non-singular.
+           The resulting spectrum value for masked columns will be ~0 (from p_bj[x]/diag). */
+        {
+            double max_diag = 0.0;
+            for (x = 0; x < ncols; x++)
+            {
+                if (p_Aij[paij_index(x, 2 * delta_x)] > max_diag)
+                    max_diag = p_Aij[paij_index(x, 2 * delta_x)];
+            }
+            if (max_diag > 0.0)
+            {
+                double min_diag = max_diag * 1.0e-10;
+                for (x = 0; x < ncols; x++)
+                {
+                    if (p_Aij[paij_index(x, 2 * delta_x)] < min_diag)
+                        p_Aij[paij_index(x, 2 * delta_x)] = min_diag;
+                }
+            }
         }
 
         /* Solve the system of equations */
