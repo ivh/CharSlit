@@ -337,20 +337,19 @@ def plot_slitdec_results(im, model, spectrum=None, slitfunction=None, uncertaint
 
     # Overlay slitcurve trajectories if available
     if slitcurve_data is not None:
-        # Overlay on all three image panels
-        for ax in [ax1, ax2, ax3]:
-            overlay_slitcurve_trajectories(
-                ax,
-                nrows,
-                ncols,
-                slitcurve_data,
-                num_lines=5,
-                show_fitted=True,
-                show_interpolated=True,
-            )
-            # Set axis limits to match image extent
-            ax.set_xlim(0, ncols)
-            ax.set_ylim(0, nrows)
+        # Overlay on input image only (ax1)
+        overlay_slitcurve_trajectories(
+            ax1,
+            nrows,
+            ncols,
+            slitcurve_data,
+            num_lines=5,
+            show_fitted=True,
+            show_interpolated=True,
+        )
+        # Set axis limits to match image extent
+        ax1.set_xlim(0, ncols)
+        ax1.set_ylim(0, nrows)
 
     # Bottom row - Panel 4: Spectrum (spans 2/3 width)
     if spectrum is not None and uncertainty is not None:

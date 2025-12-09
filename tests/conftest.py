@@ -300,14 +300,21 @@ def real_data_files(request):
                 lambda_sL = float(data['lambda_sL'])
 
             # Load trajectory data for plotting (copy arrays to avoid memory-mapped issues)
-            slitcurve_data = {
-                'slitcurve': slitcurve,
-                'slitdeltas': slitdeltas,
-            }
-            if 'slitcurve_coeffs' in data and 'x_refs' in data and 'y_refs' in data:
-                slitcurve_data['slitcurve_coeffs'] = np.array(data['slitcurve_coeffs'])
-                slitcurve_data['x_refs'] = np.array(data['x_refs'])
-                slitcurve_data['y_refs'] = np.array(data['y_refs'])
+            # Load ALL keys from the NPZ file to match standalone script behavior
+            slitcurve_data = {k: data[k] for k in data.files}
+            
+            # Ensure we have the explicit arrays we need as copies (not memory mapped)
+            # This is critical because the data context manager closes the file
+            keys_to_copy = ['slitcurve', 'slitdeltas', 'slitcurve_coeffs', 'x_refs', 'y_refs']
+            for key in keys_to_copy:
+                if key in slitcurve_data:
+                    slitcurve_data[key] = np.array(slitcurve_data[key])
+            
+            # Fallback for slitcurve/slitdeltas if not in file (legacy support)
+            if 'slitcurve' not in slitcurve_data:
+                slitcurve_data['slitcurve'] = slitcurve
+            if 'slitdeltas' not in slitcurve_data:
+                slitcurve_data['slitdeltas'] = slitdeltas
 
     # Fallback to legacy slitdeltas NPZ
     elif slitdeltas_path.exists():
