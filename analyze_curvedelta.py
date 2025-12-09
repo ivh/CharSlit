@@ -161,25 +161,37 @@ def analyze_curvedelta(npz_path, output_dir=None, show=False):
     ax3 = fig.add_subplot(gs[1, 0])
     ax3_twin = ax3.twinx()
 
-    l1 = ax3.plot(c1, 'b-', linewidth=1.5, label='c1 (linear)')
+    # Plot c1 (linear term) on left axis
+    l1 = ax3.plot(slitcurve[:, 1], 'b-', linewidth=1.5, label='c1 (linear)')
     ax3.set_xlabel('Column')
     ax3.set_ylabel('c1 (pixels/row)', color='b')
     ax3.tick_params(axis='y', labelcolor='b')
     ax3.grid(True, alpha=0.3)
 
-    l2 = ax3_twin.plot(c2, 'r-', linewidth=1.5, label='c2 (quadratic)')
-    ax3_twin.set_ylabel('c2 (pixels/row²)', color='r')
-    ax3_twin.tick_params(axis='y', labelcolor='r')
+    # Plot higher order terms on right axis
+    lines = l1
+    colors = ['r', 'g', 'm', 'c', 'y', 'k']
+    
+    for i in range(2, n_coeffs):
+        color = colors[(i-2) % len(colors)]
+        term_name = ["constant", "linear", "quadratic", "cubic", "quartic", "quintic"][i] if i < 6 else f"degree-{i}"
+        label = f'c{i} ({term_name})'
+        l = ax3_twin.plot(slitcurve[:, i], color=color, linestyle='-', linewidth=1.5, label=label)
+        lines += l
 
-    ax3.set_title('Polynomial coefficients vs column')
+    ax3_twin.set_ylabel('Higher order coeffs', color='k')
+    # ax3_twin.tick_params(axis='y', labelcolor='r') # Keep black since multiple curves
+
+    ax3.set_title(f'Polynomial coefficients (degree {poly_degree})')
 
     # Combine legends
-    lines = l1 + l2
     labels = [l.get_label() for l in lines]
-    ax3.legend(lines, labels, loc='best')
+    ax3.legend(lines, labels, loc='best', fontsize=8)
 
     # Panel 4: Angle from vertical
     ax4 = fig.add_subplot(gs[1, 1])
+    # Angle is determined by c1 (linear term)
+    c1 = slitcurve[:, 1]
     angles = np.arctan(c1) * 180 / np.pi
     ax4.plot(angles, 'g-', linewidth=1.5)
     ax4.set_xlabel('Column')
@@ -208,12 +220,13 @@ def analyze_curvedelta(npz_path, output_dir=None, show=False):
             # Get coefficients at this position
             x_col = int(np.round(x_ref))
             if 0 <= x_col < ncols:
-                c1_val = slitcurve[x_col, 1]
-                c2_val = slitcurve[x_col, 2]
-
-                # Evaluate trajectory: x = x_ref + c1*(y - y_ref) + c2*(y - y_ref)^2
+                coeffs = slitcurve[x_col]
+                
+                # Evaluate trajectory: x = x_ref + sum(c_i * dy^i)
                 dy = y_positions - y_ref
-                x_positions = x_ref + c1_val * dy + c2_val * dy**2
+                # np.polyval expects [cn, ..., c1, c0]
+                x_poly = np.polyval(coeffs[::-1], dy)
+                x_positions = x_ref + x_poly
 
                 # Add slitdeltas
                 x_positions += slitdeltas
