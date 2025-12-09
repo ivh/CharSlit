@@ -564,6 +564,8 @@ class TestRealData:
             data["slitcurve"],
             data["slitdeltas"],
             osample=data["osample"],
+            lambda_sP=data["lambda_sP"],
+            lambda_sL=data["lambda_sL"],
         )
 
         # Basic checks

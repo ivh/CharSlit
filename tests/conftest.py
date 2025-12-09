@@ -99,7 +99,7 @@ def save_test_data(request):
 
         if wide_image:
             # Vertical layout for wide images: each image panel gets its own row
-            fig = plt.figure(figsize=(14, 6))
+            fig = plt.figure(figsize=(22, 9))
 
             # Define positions [left, bottom, width, height]
             img_panel_width = 0.80
@@ -474,6 +474,8 @@ def real_data_files(request):
     slitcurve = np.zeros((ncols, 3))
     slitdeltas = np.zeros(nrows)
     ycen = np.full(ncols, nrows / 2.0)
+    lambda_sP = 0.0  # Default spectrum smoothing
+    lambda_sL = 1.0  # Default slit function smoothing
 
     # Load from curvedelta NPZ if available (preferred)
     if curvedelta_path.exists():
@@ -492,6 +494,11 @@ def real_data_files(request):
                 ycen = data['ycen'].astype(np.float64)
                 if ycen.shape[0] != ncols:
                     raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
+
+            if 'lambda_sP' in data:
+                lambda_sP = float(data['lambda_sP'])
+            if 'lambda_sL' in data:
+                lambda_sL = float(data['lambda_sL'])
 
     # Fallback to legacy slitdeltas NPZ
     elif slitdeltas_path.exists():
@@ -545,6 +552,7 @@ def real_data_files(request):
     print(f"  {fits_path.name}: slitcurve shape={slitcurve.shape}, ycen shape={ycen.shape}, slitdeltas shape={slitdeltas.shape}")
     print(f"  {fits_path.name}: slitcurve non-zero coeffs: c0={np.sum(np.abs(slitcurve[:,0])>1e-10)}, c1={np.sum(np.abs(slitcurve[:,1])>1e-10)}, c2={np.sum(np.abs(slitcurve[:,2])>1e-10)}")
     print(f"  {fits_path.name}: ycen range=[{ycen.min():.3f}, {ycen.max():.3f}], mean={ycen.mean():.3f}")
+    print(f"  {fits_path.name}: lambda_sP={lambda_sP}, lambda_sL={lambda_sL}")
 
     return {
         'im': im,
@@ -557,6 +565,8 @@ def real_data_files(request):
         'ncols': ncols,
         'osample': osample,
         'ny': ny,
+        'lambda_sP': lambda_sP,
+        'lambda_sL': lambda_sL,
         'filename': fits_path.name,
         'slitcurve_data': slitcurve_data,
     }
