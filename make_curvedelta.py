@@ -354,38 +354,6 @@ def fit_trajectory_polynomial(
         return None, {"fit_failed": True, "reason": str(e)}
 
 
-def convert_to_slitcurve_coeffs(
-    poly_coeffs: np.ndarray, ycen: float
-) -> np.ndarray:
-    """
-    Convert polynomial coefficients from x = a0 + a1*y + a2*y^2
-    to slitcurve format: delta_x = c0 + c1*(y - ycen) + c2*(y - ycen)^2
-
-    Args:
-        poly_coeffs: [a0, a1, a2, ...] coefficients
-        ycen: Center line offset (0-1)
-
-    Returns:
-        [c0, c1, c2] coefficients in slitcurve format
-    """
-    # For now, we only support quadratic polynomials
-    if len(poly_coeffs) < 3:
-        poly_coeffs = np.pad(poly_coeffs, (0, 3 - len(poly_coeffs)), mode="constant")
-
-    a0, a1, a2 = poly_coeffs[:3]
-
-    # Coordinate transformation:
-    # x = a0 + a1*y + a2*y^2
-    # x = a0 + a1*(dy + ycen) + a2*(dy + ycen)^2  where dy = y - ycen
-    # x = (a0 + a1*ycen + a2*ycen^2) + (a1 + 2*a2*ycen)*dy + a2*dy^2
-
-    c0 = a0 + a1 * ycen + a2 * ycen**2
-    c1 = a1 + 2 * a2 * ycen
-    c2 = a2
-
-    return np.array([c0, c1, c2])
-
-
 def fit_coefficient_interpolation(
     avg_cols: np.ndarray, coeffs_array: np.ndarray, ncols: int, poly_degree: int
 ) -> tuple[np.ndarray, dict]:
@@ -719,6 +687,11 @@ def process_fits_file(
         max_rms = 2.0    # Filter out poor fits
         min_rms = 0.01   # Filter out suspiciously perfect fits (likely 2-3 points)
 
+        # Relax max_rms for linear fits (degree 1) as they will have large residuals due to curvature
+        if config.poly_degree < 2:
+            print(f"  Relaxing max_rms filter for degree {config.poly_degree} fit (expecting curvature residuals)")
+            max_rms = 100.0
+
         print(f"  Quality filter: requiring >= {min_points} points ({min_points_fraction*100:.0f}% of {nrows} rows)")
 
         n_filtered = 0
@@ -753,6 +726,10 @@ def process_fits_file(
         y_refs = np.array(y_refs)
 
         print(f"  Successfully fit {len(slitcurve_coeffs)} lines")
+
+        if len(slitcurve_coeffs) == 0:
+            print("  Error: No lines passed quality filtering!")
+            return None
 
         # Interpolate coefficients across all columns
         slitcurve, interp_fit_info = fit_coefficient_interpolation(
@@ -827,9 +804,13 @@ def plot_results(results: list[dict], config: CurveDeltaConfig = DEFAULT_CONFIG)
         # Plot 1: Slitcurve coefficients
         ax1 = fig.add_subplot(gs[0, :])
         x_cols = np.arange(result["ncols"])
+        n_coeffs = result["slitcurve"].shape[1]
+        
         ax1.plot(x_cols, result["slitcurve"][:, 0], label="c0", alpha=0.7)
-        ax1.plot(x_cols, result["slitcurve"][:, 1], label="c1", alpha=0.7)
-        ax1.plot(x_cols, result["slitcurve"][:, 2] * 10, label="c2 × 10", alpha=0.7)
+        if n_coeffs > 1:
+            ax1.plot(x_cols, result["slitcurve"][:, 1], label="c1", alpha=0.7)
+        if n_coeffs > 2:
+            ax1.plot(x_cols, result["slitcurve"][:, 2] * 10, label="c2 × 10", alpha=0.7)
 
         # Mark the positions where we have actual line measurements
         for avg_col, coeffs in zip(result["avg_cols"], result["slitcurve_coeffs"]):
