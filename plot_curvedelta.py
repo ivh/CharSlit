@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 
-from slitcurve_plotting import overlay_slitcurve_trajectories
+from plotting import overlay_slitcurve_trajectories
 
 
 def plot_curvedelta(
