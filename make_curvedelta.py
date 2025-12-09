@@ -311,23 +311,23 @@ def fit_trajectory_polynomial(
     x_positions = np.array([x for _, x in trajectory])
 
     try:
-        # Reference point: y=0 (row index 0)
-        # This matches the C code which computes (dy - ycen) ≈ y
-        y_ref = 0.0
+        # Reference point: y=nrows//2 (middle of image)
+        # This matches the C code which computes t = dy - ycen ≈ y - nrows/2
+        y_ref = float(nrows // 2)
 
-        # Find x position at y=0 (extrapolate)
+        # Find x position at y=y_ref (extrapolate)
         coeffs_abs = np.polyfit(rows, x_positions, poly_degree)
         x_ref = np.polyval(coeffs_abs, y_ref)
 
-        # Fit centered at y=0: (x - x_ref) vs y
-        # Since y_ref = 0, y_centered = rows - 0 = rows
+        # Fit centered at y=y_ref: (x - x_ref) vs (y - y_ref)
+        y_centered = rows - y_ref
         x_centered = x_positions - x_ref
 
-        coeffs = np.polyfit(rows, x_centered, poly_degree)
+        coeffs = np.polyfit(y_centered, x_centered, poly_degree)
         coeffs = coeffs[::-1]  # Reverse to get [a0, a1, a2, ...]
 
         # Calculate residuals
-        y_fit = np.polyval(coeffs[::-1], rows)
+        y_fit = np.polyval(coeffs[::-1], y_centered)
         residuals = x_centered - y_fit
         rms_residual = np.sqrt(np.mean(residuals**2))
 

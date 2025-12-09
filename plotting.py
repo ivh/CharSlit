@@ -102,7 +102,7 @@ def overlay_slitcurve_trajectories(
         # No fitted trajectories, use num_lines evenly spaced vertical lines
         plot_indices = np.linspace(0, ncols - 1, num_lines, dtype=int)
         x_positions_to_plot = plot_indices.astype(float)
-        y_positions_to_plot = np.full(len(plot_indices), nrows / 2.0)
+        y_positions_to_plot = np.full(len(plot_indices), float(nrows // 2))
 
     # Plot fitted trajectories (individual emission lines) if available
     if show_fitted and has_fitted:
