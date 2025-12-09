@@ -1,8 +1,9 @@
 #manually added
 goodplots/
 plots/
+*.fits
 *.npz
-*png
+*.png
 uv.lock
 test_data_output/
 *.tar.gz
