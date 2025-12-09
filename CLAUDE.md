@@ -25,7 +25,8 @@ CharSlit is a Python wrapper for the `slitdec` C library, which performs slit de
 - The entire illuminated region in each image is ONE spectral order
 
 **slitcurve polynomial**:
-- Format: `delta_x = c0 + c1*(y - ycen) + c2*(y - ycen)^2` for each column x
+- Format: `delta_x = c0 + c1*(y - ycen) + c2*(y - ycen)^2 + ... + c5*(y - ycen)^5` for each column x
+- Supports polynomial degrees 1-5 (2-6 coefficients)
 - Describes the horizontal offset of the slit as a function of vertical position
 - Should trace the curvature of the spectral order visible in the data
 
@@ -97,13 +98,14 @@ These should overlay almost perfectly if interpolation is working correctly.
 ### Output Files
 
 The `curvedelta_{basename}.npz` files contain:
-- `slitcurve`: Interpolated coefficients, shape (ncols, 3), with slitcurve[:,0] = 0
+- `slitcurve`: Interpolated coefficients, shape (ncols, n_coeffs), with slitcurve[:,0] = 0
 - `slitdeltas`: Residual offsets after removing polynomial, shape (nrows,)
 - `ycen`: Fractional offsets for slitdec, shape (ncols,)
-- `slitcurve_coeffs`: Raw trajectory coefficients, shape (n_good_lines, 3)
+- `slitcurve_coeffs`: Raw trajectory coefficients, shape (n_good_lines, n_coeffs)
 - `x_refs`: Reference x positions for each trajectory, shape (n_good_lines,)
 - `y_refs`: Reference y positions for each trajectory, shape (n_good_lines,)
 - `avg_cols`: Average column position for each trajectory
+- `poly_degree`: Polynomial degree used for fitting (n_coeffs = poly_degree + 1)
 
 ### Masked Array Support for NaN Handling
 
@@ -255,6 +257,43 @@ if (x + ix1 >= 0 && x + ix2 < ncols) {
 ```
 
 So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is added to the total shift from the curve polynomial.
+
+## Polynomial Degree Handling
+
+The codebase supports polynomial degrees 1-5 for fitting slit curvature. This flexibility is achieved through a pragmatic approach:
+
+### C Code Implementation
+
+The C code (`slitdec.c`) is **hard-coded to support up to degree 5** (6 coefficients: c0 through c5):
+- The `curve_index` macro uses `(x)*6 + (y)` to index into the coefficient array
+- Polynomial evaluation uses Horner's method for efficiency: `t*(c1 + t*(c2 + t*(c3 + t*(c4 + t*c5))))`
+- The delta_x calculation includes all terms up to degree 5
+- Maximum degree of 5 is sufficient for realistic slit curvatures
+
+### Wrapper Padding
+
+The Python wrapper (`slitdec_wrapper.cpp`) automatically pads lower-degree polynomials:
+- Accepts slitcurve arrays with 1-6 coefficients (degrees 0-5)
+- If fewer than 6 coefficients provided, pads with zeros to reach 6
+- Padding preserves mathematical correctness: unused high-order terms are simply zero
+- No need to pass polynomial degree to C function
+
+### Python Scripts
+
+All Python scripts handle arbitrary polynomial degrees dynamically:
+- **make_curvedelta.py**: `--poly-degree` flag (default 2) fits polynomials of specified degree
+- **plotting.py**: Uses `np.polyval()` to evaluate polynomials of any degree
+- **analyze_curvedelta.py**: Detects degree from array shape and displays all coefficients
+
+### Why This Approach?
+
+This design avoids the complexity of making C code fully dynamic while maintaining flexibility:
+- **Simple**: No need to pass degree parameter through C call stack
+- **Efficient**: Hard-coded degree 5 adds minimal overhead vs degree 2
+- **Safe**: Wrapper ensures arrays are always padded correctly
+- **Flexible**: Python layer can work with any degree 1-5
+
+If degree >5 is needed in the future, only the C code needs updating (change `*6` to `*n` and extend polynomial evaluation).
 
 ## Testing Infrastructure
 
