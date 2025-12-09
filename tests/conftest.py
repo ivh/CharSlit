@@ -99,28 +99,34 @@ def save_test_data(request):
 
         if wide_image:
             # Vertical layout for wide images: each image panel gets its own row
-            fig = plt.figure(figsize=(14, 9))
+            fig = plt.figure(figsize=(14, 6))
 
             # Define positions [left, bottom, width, height]
             img_panel_width = 0.80
-            img_panel_height = 0.12
+            img_panel_height = 0.15
             colorbar_width = 0.015
             left_margin = 0.06
-            vertical_gap = 0.015
+            vertical_gap = 0.02
 
-            # Three image panels stacked vertically, starting higher
-            top_start = 0.74
+            # Three image panels stacked vertically
+            top_start = 0.82
             pos1 = [left_margin, top_start, img_panel_width, img_panel_height]
             pos2 = [left_margin, top_start - img_panel_height - vertical_gap, img_panel_width, img_panel_height]
             pos3 = [left_margin, top_start - 2*(img_panel_height + vertical_gap), img_panel_width, img_panel_height]
 
+            # Colorbar for input image (right side, spanning im and model panels)
+            im_cbar_left = left_margin + img_panel_width + 0.005
+            im_cbar_bottom = pos2[1]  # Bottom of model panel
+            im_cbar_height = pos1[1] + pos1[3] - pos2[1]  # From model bottom to im top
+            pos_im_cbar = [im_cbar_left, im_cbar_bottom, colorbar_width, im_cbar_height]
+
             # Bottom row positions (spectrum and slit function)
-            bottom_height = 0.20
+            bottom_height = 0.25
             bottom_gap = 0.04
             bottom_left_width = 0.52
             bottom_right_width = 0.28
-            pos4 = [left_margin, 0.06, bottom_left_width, bottom_height]
-            pos5 = [left_margin + bottom_left_width + bottom_gap, 0.06, bottom_right_width, bottom_height]
+            pos4 = [left_margin, 0.08, bottom_left_width, bottom_height]
+            pos5 = [left_margin + bottom_left_width + bottom_gap, 0.08, bottom_right_width, bottom_height]
         else:
             # Horizontal layout for normal images: 3 panels in top row
             fig = plt.figure(figsize=(15, 7.5))
@@ -135,11 +141,14 @@ def save_test_data(request):
             panel_width = 0.26
             colorbar_width = 0.015
             h_gap = 0.04
-            left_margin = 0.06
+            left_margin = 0.08  # Extra margin for left colorbar
 
             pos1 = [left_margin, top_bottom, panel_width, top_height]
             pos2 = [left_margin + panel_width + h_gap, top_bottom, panel_width, top_height]
             pos3 = [left_margin + 2*(panel_width + h_gap), top_bottom, panel_width, top_height]
+
+            # Colorbar for input image (left side of first panel)
+            pos_im_cbar = [left_margin - colorbar_width - 0.01, top_bottom, colorbar_width, top_height]
 
             # Bottom row positions
             bottom_left_width = 2 * panel_width + h_gap
@@ -147,19 +156,55 @@ def save_test_data(request):
             pos4 = [left_margin, 0.08, bottom_left_width, bottom_height]
             pos5 = [left_margin + bottom_left_width + h_gap, 0.08, bottom_right_width, bottom_height]
 
-        # Panel 1: Input image with percentile scaling (no colorbar)
+        # Panel 1: Input image with percentile scaling
         ax1 = fig.add_axes(pos1)
         im1 = ax1.imshow(im, cmap='viridis', aspect='equal', vmin=im_vmin, vmax=im_vmax,
                          origin='lower', extent=[0, ncols, 0, nrows])
-        ax1.set_title('Input Image')
+        if wide_image:
+            ax1.set_ylabel('Input Image', rotation=0, ha='right', va='center')
+        else:
+            ax1.set_title('Input Image')
         ax1.set_xticks([])
         ax1.set_yticks([])
+
+        # Colorbar for input image - position computed to match actual image height
+        # Need to account for figure aspect ratio when computing image bounds
+        bbox1 = ax1.get_position()
+        fig_width, fig_height = fig.get_size_inches()
+        fig_aspect = fig_width / fig_height
+        # Convert axes dimensions to display aspect ratio
+        axes_aspect = (bbox1.width * fig_aspect) / bbox1.height
+        img_aspect = ncols / nrows  # width/height of image
+        
+        if img_aspect > axes_aspect:
+            # Image is limited by width, centered vertically
+            img_height_frac = axes_aspect / img_aspect
+            cbar1_bottom = bbox1.y0 + bbox1.height * (1 - img_height_frac) / 2
+            cbar1_height = bbox1.height * img_height_frac
+        else:
+            # Image is limited by height
+            cbar1_bottom = bbox1.y0
+            cbar1_height = bbox1.height
+
+        if wide_image:
+            # Wide layout: colorbar on right, spanning im and model panels
+            cax1 = fig.add_axes(pos_im_cbar)
+            fig.colorbar(im1, cax=cax1)
+        else:
+            # Normal layout: colorbar on left of first panel, aligned with image
+            cax1 = fig.add_axes([bbox1.x0 - colorbar_width - 0.005, cbar1_bottom, colorbar_width, cbar1_height])
+            cbar1 = fig.colorbar(im1, cax=cax1)
+            cax1.yaxis.set_ticks_position('left')
+            cax1.yaxis.set_label_position('left')
 
         # Panel 2: Model with same scaling as input (no colorbar)
         ax2 = fig.add_axes(pos2)
         im2 = ax2.imshow(model, cmap='viridis', aspect='equal', vmin=im_vmin, vmax=im_vmax,
                          origin='lower', extent=[0, ncols, 0, nrows])
-        ax2.set_title('Model')
+        if wide_image:
+            ax2.set_ylabel('Model', rotation=0, ha='right', va='center')
+        else:
+            ax2.set_title('Model')
         ax2.set_xticks([])
         ax2.set_yticks([])
 
@@ -167,17 +212,22 @@ def save_test_data(request):
         ax3 = fig.add_axes(pos3)
         im3 = ax3.imshow(diff, cmap='bwr', aspect='equal', vmin=diff_vmin, vmax=diff_vmax,
                          origin='lower', extent=[0, ncols, 0, nrows])
-        ax3.set_title('Difference (Input - Model)')
+        if wide_image:
+            ax3.set_ylabel('Residual', rotation=0, ha='right', va='center')
+        else:
+            ax3.set_title('Difference (Input - Model)')
         ax3.set_xticks([])
         ax3.set_yticks([])
 
         # Colorbar positioned to match the actual image height in the axes
-        # Get the axes position in display coordinates to calculate image bounds
+        # Need to account for figure aspect ratio when computing image bounds
         bbox = ax3.get_position()
-        img_aspect = nrows / ncols
-        if img_aspect < bbox.height / bbox.width:
+        axes_aspect3 = (bbox.width * fig_aspect) / bbox.height
+        img_aspect3 = ncols / nrows  # width/height of image
+        
+        if img_aspect3 > axes_aspect3:
             # Image is limited by width, centered vertically
-            img_height_frac = (bbox.width * img_aspect) / bbox.height
+            img_height_frac = axes_aspect3 / img_aspect3
             cbar_bottom = bbox.y0 + bbox.height * (1 - img_height_frac) / 2
             cbar_height = bbox.height * img_height_frac
         else:
