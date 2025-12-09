@@ -22,6 +22,7 @@ def plot_curvedelta(
     curvedelta_file,
     num_lines=5,
     output_dir="plots",
+    show=False,
 ):
     """
     Plot FITS image with slitcurve overlays.
@@ -92,9 +93,13 @@ def plot_curvedelta(
     basename = os.path.basename(fits_file).replace(".fits", "")
     output_file = os.path.join(output_dir, f"{basename}_slitcurve_overlay.png")
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
-    plt.close()
 
     print(f"  Saved: {output_file}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
 def main():
@@ -122,6 +127,12 @@ def main():
         type=str,
         default="plots",
         help="Directory to save plots (default: plots)",
+    )
+    parser.add_argument(
+        "-s",
+        "--show",
+        action="store_true",
+        help="Show plots interactively (default: False)",
     )
     parser.add_argument(
         "files",
@@ -162,7 +173,7 @@ def main():
             continue
 
         print(f"Processing {basename}...")
-        plot_curvedelta(fits_file, curvedelta_file, args.num_lines, args.output_dir)
+        plot_curvedelta(fits_file, curvedelta_file, args.num_lines, args.output_dir, args.show)
 
     print(f"\nDone! Plots saved to {args.output_dir}/")
 
