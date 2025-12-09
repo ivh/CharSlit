@@ -61,10 +61,9 @@ def analyze_curvedelta(npz_path, output_dir=None, show=False):
     print(f"Dimensions: {nrows} rows × {ncols} columns")
     print()
 
-    # Extract polynomial coefficients
-    c0 = slitcurve[:, 0]
-    c1 = slitcurve[:, 1]
-    c2 = slitcurve[:, 2]
+    # Extract polynomial coefficients (arbitrary degree)
+    n_coeffs = slitcurve.shape[1]
+    poly_degree = n_coeffs - 1
 
     # ========== Statistics ==========
     print("SLITDELTAS (per-row horizontal offsets):")
@@ -79,47 +78,42 @@ def analyze_curvedelta(npz_path, output_dir=None, show=False):
     print(f"  Mean:   {ycen.mean():8.4f} pixels")
     print(f"  Range:  [{ycen.min():7.4f}, {ycen.max():7.4f}]")
     print(f"  Span:   {ycen.max() - ycen.min():8.4f} pixels")
-    # Check if integer part is present
     ycen_frac = ycen - np.floor(ycen)
-    if np.all(ycen > 10):  # Likely has integer offset
+    if np.all(ycen > 10):
         print(f"  Integer offset: ~{int(np.floor(ycen.mean()))}")
         print(f"  Fractional range: [{ycen_frac.min():.4f}, {ycen_frac.max():.4f}]")
     print()
 
-    print("SLITCURVE c0 (constant offset):")
-    print(f"  Mean:   {c0.mean():10.6f}")
-    print(f"  Range:  [{c0.min():10.6f}, {c0.max():10.6f}]")
-    print()
+    print(f"SLITCURVE POLYNOMIAL (degree {poly_degree}):")
+    for i in range(n_coeffs):
+        c = slitcurve[:, i]
+        term_name = ["constant", "linear", "quadratic", "cubic", "quartic", "quintic"][i] if i < 6 else f"degree-{i}"
+        units = "" if i == 0 else f" pixels/row^{i}"
+        print(f"  c{i} ({term_name} term):")
+        if i <= 2:
+            print(f"    Mean:   {c.mean():10.6f}{units}")
+            print(f"    Range:  [{c.min():10.6f}, {c.max():10.6f}]")
+        else:
+            print(f"    Mean:   {c.mean():10.6e}{units}")
+            print(f"    Range:  [{c.min():10.6e}, {c.max():10.6e}]")
 
-    print("SLITCURVE c1 (linear term, tilt):")
-    print(f"  Mean:   {c1.mean():10.6f} pixels/row")
-    print(f"  Range:  [{c1.min():10.6f}, {c1.max():10.6f}]")
-    print(f"  Variation: {c1.max() - c1.min():10.6f} pixels/row over {ncols} columns")
-    print(f"  Rate of change: {(c1[-1] - c1[0]) / ncols:.3e} per column")
-
-    # Angle from vertical (c1 is dx/dy, so angle = arctan(c1))
-    angle_mean = np.arctan(c1.mean()) * 180 / np.pi
-    angle_min = np.arctan(c1.min()) * 180 / np.pi
-    angle_max = np.arctan(c1.max()) * 180 / np.pi
-    print(f"  Angle from vertical:")
-    print(f"    Mean: {angle_mean:7.3f}°")
-    print(f"    Range: [{angle_min:7.3f}°, {angle_max:7.3f}°]")
-
-    # Total tilt over detector height
-    tilt_mean = c1.mean() * nrows
-    tilt_range = (c1.max() - c1.min()) * nrows
-    print(f"  Total tilt over {nrows} rows:")
-    print(f"    Mean: {tilt_mean:7.3f} pixels")
-    print(f"    Range variation: {tilt_range:7.3f} pixels")
-    print()
-
-    print("SLITCURVE c2 (quadratic term, curvature):")
-    print(f"  Mean:   {c2.mean():10.6e} pixels/row²")
-    print(f"  Range:  [{c2.min():10.6e}, {c2.max():10.6e}]")
-    if c2.max() > 0:
-        # Total curvature over detector height
-        curv_mean = c2.mean() * nrows**2
-        print(f"  Total curvature over {nrows} rows: {curv_mean:7.3f} pixels")
+        if i == 1:
+            print(f"    Variation: {c.max() - c.min():10.6f} pixels/row over {ncols} columns")
+            print(f"    Rate of change: {(c[-1] - c[0]) / ncols:.3e} per column")
+            angle_mean = np.arctan(c.mean()) * 180 / np.pi
+            angle_min = np.arctan(c.min()) * 180 / np.pi
+            angle_max = np.arctan(c.max()) * 180 / np.pi
+            print(f"    Angle from vertical:")
+            print(f"      Mean: {angle_mean:7.3f}°")
+            print(f"      Range: [{angle_min:7.3f}°, {angle_max:7.3f}°]")
+            tilt_mean = c.mean() * nrows
+            tilt_range = (c.max() - c.min()) * nrows
+            print(f"    Total tilt over {nrows} rows:")
+            print(f"      Mean: {tilt_mean:7.3f} pixels")
+            print(f"      Range variation: {tilt_range:7.3f} pixels")
+        elif i == 2 and c.max() > 0:
+            curv_mean = c.mean() * nrows**2
+            print(f"    Total curvature over {nrows} rows: {curv_mean:7.3f} pixels")
     print()
 
     if has_trajectories:

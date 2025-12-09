@@ -394,27 +394,28 @@ def fit_coefficient_interpolation(
 
     Args:
         avg_cols: Array of average column positions for each line
-        coeffs_array: Array of shape (n_lines, 3) with [c0, c1, c2] for each line
+        coeffs_array: Array of shape (n_lines, n_coeffs) with polynomial coefficients
         ncols: Total number of columns in the image
         poly_degree: Degree of polynomial for interpolation
 
     Returns:
         Tuple of (slitcurve, fit_info)
-        slitcurve: Array of shape (ncols, 3) with coefficients for all columns
+        slitcurve: Array of shape (ncols, n_coeffs) with coefficients for all columns
         fit_info: Dictionary with interpolation quality metrics
     """
-    slitcurve = np.zeros((ncols, 3))
-    fit_info = {"c0_fit": None, "c1_fit": None, "c2_fit": None}
+    n_coeffs = coeffs_array.shape[1]
+    slitcurve = np.zeros((ncols, n_coeffs))
+    fit_info = {}
 
     x_eval = np.arange(ncols)
 
-    for i in range(3):
+    for i in range(n_coeffs):
         coeff_values = coeffs_array[:, i]
 
         # a0 (i=0) should be ~0, so don't interpolate it - just set to 0
         if i == 0:
             slitcurve[:, 0] = 0.0
-            fit_info["c0_fit"] = {
+            fit_info[f"c{i}_fit"] = {
                 "poly_coeffs": None,
                 "rms_residual": 0.0,
                 "input_points": len(avg_cols),

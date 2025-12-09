@@ -12,10 +12,11 @@ import warnings
 
 def evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows):
     """
-    Evaluate a trajectory fit: x = x_ref + a0 + a1*(y - y_ref) + a2*(y - y_ref)^2
+    Evaluate a trajectory fit: x = x_ref + P(y - y_ref)
+    where P is a polynomial with coefficients [a0, a1, a2, ...].
 
     Args:
-        coeffs: Array [a0, a1, a2] polynomial coefficients
+        coeffs: Array [a0, a1, a2, ...] polynomial coefficients (arbitrary degree)
         x_ref: Reference x position (where the line crosses y_ref)
         y_ref: Reference y position (usually nrows/2)
         nrows: Number of rows in image
@@ -25,16 +26,16 @@ def evaluate_trajectory_fit(coeffs, x_ref, y_ref, nrows):
         y_positions: Array of row indices
         x_positions: Array of x positions along the trajectory
     """
-    a0, a1, a2 = coeffs
-
     # Evaluate at each row position
     y_positions = np.arange(nrows)
 
     # Calculate offset from reference
     dy = y_positions - y_ref
 
-    # Evaluate polynomial: x = x_ref + a0 + a1*dy + a2*dy^2
-    x_positions = x_ref + a0 + a1 * dy + a2 * dy**2
+    # Evaluate polynomial: x = x_ref + sum(a_i * dy^i)
+    # np.polyval expects coefficients in descending order [a_n, ..., a2, a1, a0]
+    # but we have them in ascending order [a0, a1, a2, ..., a_n]
+    x_positions = x_ref + np.polyval(coeffs[::-1], dy)
 
     return y_positions, x_positions
 
@@ -63,10 +64,10 @@ def overlay_slitcurve_trajectories(
         nrows: Number of rows in the image
         ncols: Number of columns in the image
         slitcurve_data: Dictionary containing:
-            - 'slitcurve_coeffs': Raw trajectory coefficients (n_lines, 3) [optional]
+            - 'slitcurve_coeffs': Raw trajectory coefficients (n_lines, n_coeffs) [optional]
             - 'x_refs': Reference x positions for each trajectory (n_lines,) [optional]
             - 'y_refs': Reference y positions for each trajectory (n_lines,) [optional]
-            - 'slitcurve': Interpolated coefficients (ncols, 3)
+            - 'slitcurve': Interpolated coefficients (ncols, n_coeffs)
             - 'slitdeltas': Per-row horizontal offsets (nrows,)
         num_lines: Number of lines to plot (evenly spaced)
         show_fitted: Whether to show fitted trajectories (only if x_refs/y_refs available)
@@ -129,7 +130,7 @@ def overlay_slitcurve_trajectories(
             # Get interpolated coefficients at this x_ref position
             x_col = int(np.round(x_ref))
             if 0 <= x_col < ncols:
-                interp_coeffs = slitcurve[x_col]  # [a0=0, a1, a2]
+                interp_coeffs = slitcurve[x_col]  # [a0, a1, a2, ...] (arbitrary degree)
 
                 # Evaluate the interpolated curve
                 y_positions, x_positions_interp = evaluate_trajectory_fit(

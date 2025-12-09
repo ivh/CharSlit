@@ -276,12 +276,13 @@ def real_data_files(request):
     lambda_sL = 1.0  # Default slit function smoothing
 
     # Load from curvedelta NPZ if available (preferred)
+    slitcurve_data = {}
     if curvedelta_path.exists():
         with np.load(curvedelta_path) as data:
             if 'slitcurve' in data:
                 slitcurve = data['slitcurve'].astype(np.float64)
                 if slitcurve.shape[0] != ncols:
-                    raise ValueError(f"slitcurve shape mismatch: expected ({ncols}, 3), got {slitcurve.shape}")
+                    raise ValueError(f"slitcurve shape mismatch: expected ({ncols}, n_coeffs), got {slitcurve.shape}")
 
             if 'slitdeltas' in data:
                 slitdeltas = data['slitdeltas'].astype(np.float64)
@@ -298,6 +299,16 @@ def real_data_files(request):
             if 'lambda_sL' in data:
                 lambda_sL = float(data['lambda_sL'])
 
+            # Load trajectory data for plotting (copy arrays to avoid memory-mapped issues)
+            slitcurve_data = {
+                'slitcurve': slitcurve,
+                'slitdeltas': slitdeltas,
+            }
+            if 'slitcurve_coeffs' in data and 'x_refs' in data and 'y_refs' in data:
+                slitcurve_data['slitcurve_coeffs'] = np.array(data['slitcurve_coeffs'])
+                slitcurve_data['x_refs'] = np.array(data['x_refs'])
+                slitcurve_data['y_refs'] = np.array(data['y_refs'])
+
     # Fallback to legacy slitdeltas NPZ
     elif slitdeltas_path.exists():
         with np.load(slitdeltas_path) as data:
@@ -311,20 +322,15 @@ def real_data_files(request):
                 if ycen.shape[0] != ncols:
                     raise ValueError(f"ycen shape mismatch: expected {ncols}, got {ycen.shape[0]}")
 
-    # Create slitcurve_data dictionary for plotting
-    # Always include slitcurve and slitdeltas
-    slitcurve_data = {
-        'slitcurve': slitcurve,
-        'slitdeltas': slitdeltas,
-    }
-
-    # Add trajectory data if available (from curvedelta file)
-    if curvedelta_path.exists():
-        with np.load(curvedelta_path) as data:
-            if 'slitcurve_coeffs' in data and 'x_refs' in data and 'y_refs' in data:
-                slitcurve_data['slitcurve_coeffs'] = data['slitcurve_coeffs']
-                slitcurve_data['x_refs'] = data['x_refs']
-                slitcurve_data['y_refs'] = data['y_refs']
+        slitcurve_data = {
+            'slitcurve': slitcurve,
+            'slitdeltas': slitdeltas,
+        }
+    else:
+        slitcurve_data = {
+            'slitcurve': slitcurve,
+            'slitdeltas': slitdeltas,
+        }
 
     # Handle NaN pixels (bad pixels)
     nan_mask = np.isnan(im)
@@ -348,7 +354,9 @@ def real_data_files(request):
 
     # Debug: check loaded data
     print(f"  {fits_path.name}: slitcurve shape={slitcurve.shape}, ycen shape={ycen.shape}, slitdeltas shape={slitdeltas.shape}")
-    print(f"  {fits_path.name}: slitcurve non-zero coeffs: c0={np.sum(np.abs(slitcurve[:,0])>1e-10)}, c1={np.sum(np.abs(slitcurve[:,1])>1e-10)}, c2={np.sum(np.abs(slitcurve[:,2])>1e-10)}")
+    n_coeffs = slitcurve.shape[1]
+    coeffs_str = ", ".join([f"c{i}={np.sum(np.abs(slitcurve[:,i])>1e-10)}" for i in range(n_coeffs)])
+    print(f"  {fits_path.name}: slitcurve non-zero coeffs (poly degree {n_coeffs-1}): {coeffs_str}")
     print(f"  {fits_path.name}: ycen range=[{ycen.min():.3f}, {ycen.max():.3f}], mean={ycen.mean():.3f}")
     print(f"  {fits_path.name}: lambda_sP={lambda_sP}, lambda_sL={lambda_sL}")
 

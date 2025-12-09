@@ -34,8 +34,10 @@ nb::dict slitdec_wrapper(
     if (ycen.shape(0) != ncols) {
         throw std::runtime_error("ycen must have length ncols");
     }
-    if (slitcurve.shape(0) != ncols || slitcurve.shape(1) != 3) {
-        throw std::runtime_error("slitcurve must have shape (ncols, 3)");
+    // slitcurve must have shape (ncols, n_coeffs) where n_coeffs <= 6
+    int n_coeffs_in = slitcurve.shape(1);
+    if (slitcurve.shape(0) != ncols || n_coeffs_in > 6 || n_coeffs_in < 1) {
+        throw std::runtime_error("slitcurve must have shape (ncols, n) where 1 <= n <= 6");
     }
 
     // Calculate ny (size of slit function array)
@@ -114,6 +116,24 @@ nb::dict slitdec_wrapper(
     double* ycen_copy = new double[ncols];
     std::memcpy(ycen_copy, ycen.data(), ncols * sizeof(double));
 
+    // Pad slitcurve to 6 coefficients if needed
+    double* slitcurve_padded = nullptr;
+    bool allocated_slitcurve = false;
+    if (n_coeffs_in < 6) {
+        slitcurve_padded = new double[ncols * 6];
+        allocated_slitcurve = true;
+        // Initialize all to zero
+        std::memset(slitcurve_padded, 0, ncols * 6 * sizeof(double));
+        // Copy input coefficients
+        for (int i = 0; i < ncols; i++) {
+            for (int j = 0; j < n_coeffs_in; j++) {
+                slitcurve_padded[i * 6 + j] = slitcurve.data()[i * n_coeffs_in + j];
+            }
+        }
+    } else {
+        slitcurve_padded = const_cast<double*>(slitcurve.data());
+    }
+
     // Call the C function
     int result = slitdec(
         ncols,
@@ -122,7 +142,7 @@ nb::dict slitdec_wrapper(
         const_cast<double*>(pix_unc.data()),
         mask_copy,
         ycen_copy,
-        const_cast<double*>(slitcurve.data()),
+        slitcurve_padded,
         slitdeltas_interp,
         osample,
         lambda_sP,
@@ -138,6 +158,11 @@ nb::dict slitdec_wrapper(
     // Clean up interpolated slitdeltas
     if (allocated_interp && slitdeltas_interp != nullptr) {
         delete[] slitdeltas_interp;
+    }
+
+    // Clean up padded slitcurve
+    if (allocated_slitcurve && slitcurve_padded != nullptr) {
+        delete[] slitcurve_padded;
     }
 
     // Create nanobind arrays that own the data
