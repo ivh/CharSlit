@@ -11,6 +11,10 @@
 #define DEBUG 0
 #endif
 
+#ifndef REGULARIZE_DIAGONAL
+#define REGULARIZE_DIAGONAL 1
+#endif
+
 // Store important sizes in global variables to make access easier
 // When calculating the proper indices
 // When not checking the indices just the variables directly
@@ -200,7 +204,7 @@ static long sl_index(long i)
 #define zeta_index(x, y, z) ((z) + (y)*MAX_ZETA_Z + (x)*MAX_ZETA_Z * _nrows)
 #define mzeta_index(x, y) ((y) + (x)*_nrows)
 #define xi_index(x, y, z) ((z) + 4 * (y) + _ny * 4 * (x))
-#define curve_index(x, y) ((x)*6 + (y))  // Support up to degree 5 polynomials
+#define curve_index(x, y) ((x)*3 + (y))
 #define a_index(x, y) ((y)*n + (x))
 #define r_index(i) (i)
 #define sp_index(i) (i)
@@ -571,14 +575,7 @@ int xi_zeta_tensors(
                 else
                     w = step;
                 dy += step;
-                // Evaluate polynomial up to degree 5 using Horner's method
-                // delta = c1*t + c2*t^2 + c3*t^3 + c4*t^4 + c5*t^5 where t = (dy - ycen[x])
-                double t = dy - ycen[x];
-                delta = t * (slitcurve[curve_index(x, 1)] +
-                        t * (slitcurve[curve_index(x, 2)] +
-                        t * (slitcurve[curve_index(x, 3)] +
-                        t * (slitcurve[curve_index(x, 4)] +
-                        t *  slitcurve[curve_index(x, 5)]))))
+                delta = (slitcurve[curve_index(x, 1)] + slitcurve[curve_index(x, 2)] * (dy - ycen[x])) * (dy - ycen[x]) 
                         + slitdeltas[iy];
                 ix1 = delta;
                 ix2 = ix1 + signum(delta);
@@ -955,16 +952,7 @@ int slitdec(        int ncols,
     {
         for (y = -y_lower_lim; y < nrows - y_lower_lim + 1; y++)
         {
-            // Evaluate polynomial up to degree 5 for delta_x estimation
-            double y2 = y * y;
-            double y3 = y2 * y;
-            double y4 = y3 * y;
-            double y5 = y4 * y;
-            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] +
-                           y2 * slitcurve[curve_index(x, 2)] +
-                           y3 * slitcurve[curve_index(x, 3)] +
-                           y4 * slitcurve[curve_index(x, 4)] +
-                           y5 * slitcurve[curve_index(x, 5)]));
+            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] + y * y * slitcurve[curve_index(x, 2)]));
             delta_x = max(delta_x, tmp);
         }
     }
@@ -1077,6 +1065,7 @@ int slitdec(        int ncols,
         l_Aij[laij_index(ny - 1, 2 * osample - 1)] -= lambda; /* Lower diagonal */
         l_Aij[laij_index(ny - 1, 2 * osample)] += lambda;     /* Main diagonal  */
 
+#if REGULARIZE_DIAGONAL
         /* Regularize diagonal to prevent singular matrix from fully masked rows */
         {
             double max_diag = 0.0;
@@ -1095,6 +1084,7 @@ int slitdec(        int ncols,
                 }
             }
         }
+#endif
 
         /* Solve the system of equations */
         bandsol(l_Aij, l_bj, MAX_LAIJ_X, MAX_LAIJ_Y);
@@ -1169,6 +1159,7 @@ int slitdec(        int ncols,
             p_Aij[paij_index(ncols - 1, 2 * delta_x)] += lambda;     /* Main diagonal  */
         }
 
+#if REGULARIZE_DIAGONAL
         /* Regularize diagonal to prevent singular matrix from fully masked columns.
            When a column has no valid data (all pixels masked), the corresponding
            row of the matrix is zero, causing division by zero in bandsol.
@@ -1191,6 +1182,7 @@ int slitdec(        int ncols,
                 }
             }
         }
+#endif
 
         /* Solve the system of equations */
         bandsol(p_Aij, p_bj, MAX_PAIJ_X, MAX_PAIJ_Y);
