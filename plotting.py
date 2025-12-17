@@ -51,10 +51,6 @@ def overlay_slitcurve_trajectories(
     fitted_color="red",
     fitted_alpha=0.7,
     fitted_linewidth=1.5,
-    interp_color="white",
-    interp_alpha=0.8,
-    interp_linewidth=1.0,
-    interp_linestyle="--",
 ):
     """
     Overlay slitcurve trajectories on an image axes.
@@ -75,10 +71,6 @@ def overlay_slitcurve_trajectories(
         fitted_color: Color for fitted trajectories
         fitted_alpha: Alpha for fitted trajectories
         fitted_linewidth: Line width for fitted trajectories
-        interp_color: Color for interpolated curves
-        interp_alpha: Alpha for interpolated curves
-        interp_linewidth: Line width for interpolated curves
-        interp_linestyle: Line style for interpolated curves
     """
     slitcurve = slitcurve_data["slitcurve"]
     slitdeltas = slitcurve_data.get("slitdeltas", np.zeros(nrows))
@@ -140,15 +132,23 @@ def overlay_slitcurve_trajectories(
                 # Add slitdeltas to the x positions
                 x_positions_with_deltas = x_positions_interp + slitdeltas
 
-                # Plot the interpolated curve + deltas
+                # Plot the interpolated curve + deltas with alternating black/white dashes
                 ax.plot(
                     x_positions_with_deltas,
                     y_positions,
-                    color=interp_color,
-                    linewidth=interp_linewidth,
-                    alpha=interp_alpha,
-                    linestyle=interp_linestyle,
+                    color='black',
+                    linewidth=1,
+                    alpha=0.8,
+                    linestyle=(0, (5, 5)),
                     label="Poly + deltas" if i == 0 else None,
+                )
+                ax.plot(
+                    x_positions_with_deltas,
+                    y_positions,
+                    color='white',
+                    linewidth=1,
+                    alpha=0.8,
+                    linestyle=(5, (5, 5)),
                 )
 
 def plot_slitdec_results(im, model, spectrum=None, slitfunction=None, uncertainty=None, slitcurve_data=None, output_filename=None, show=False):
