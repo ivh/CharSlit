@@ -317,80 +317,6 @@ int bandsol(double *a, double *r, int n, int nd)
 
 // This is the faster median determination method.
 // Algorithm from Numerical recipes in C of 1992
-// see http://ndevilla.free.fr/median/median/
-
-#define ELEM_SWAP(a, b)          \
-    {                            \
-        register double t = (a); \
-        (a) = (b);               \
-        (b) = t;                 \
-    }
-
-double quick_select_median(double arr[], unsigned int n)
-{
-    int low, high;
-    int median;
-    int middle, ll, hh;
-
-    low = 0;
-    high = n - 1;
-    median = (low + high) / 2;
-    for (;;)
-    {
-        if (high <= low) /* One element only */
-            return arr[median];
-        if (high == low + 1)
-        { /* Two elements only */
-            if (arr[low] > arr[high])
-                ELEM_SWAP(arr[low], arr[high]);
-            return arr[median];
-        }
-        /* Find median of low, middle and high items; swap into position low */
-        middle = (low + high) / 2;
-        if (arr[middle] > arr[high])
-            ELEM_SWAP(arr[middle], arr[high]);
-        if (arr[low] > arr[high])
-            ELEM_SWAP(arr[low], arr[high]);
-        if (arr[middle] > arr[low])
-            ELEM_SWAP(arr[middle], arr[low]);
-        /* Swap low item (now in position middle) into position (low+1) */
-        ELEM_SWAP(arr[middle], arr[low + 1]);
-        /* Nibble from each end towards middle, swapping items when stuck */
-        ll = low + 1;
-        hh = high;
-        for (;;)
-        {
-            do
-                ll++;
-            while (arr[low] > arr[ll]);
-            do
-                hh--;
-            while (arr[hh] > arr[low]);
-            if (hh < ll)
-                break;
-            ELEM_SWAP(arr[ll], arr[hh]);
-        }
-        /* Swap middle item (in position low) back into correct position */
-        ELEM_SWAP(arr[low], arr[hh]);
-        /* Re-set active partition */
-        if (hh <= median)
-            low = ll;
-        if (hh >= median)
-            high = hh - 1;
-    }
-}
-
-double median_absolute_deviation(double arr[], unsigned int n)
-{
-    double median = quick_select_median(arr, n);
-    for (size_t i = 0; i < n; i++)
-    {
-        arr[i] = fabs(arr[i] - median);
-    }
-    double mad = quick_select_median(arr, n);
-    return mad;
-}
-
 int xi_zeta_tensors(
     int ncols,
     int nrows,
@@ -861,6 +787,7 @@ int slitdec(        int ncols,
                     double lambda_sP,
                     double lambda_sL,
                     int maxiter,
+                    double kappa,
                     double *sP,
                     double *sL,
                     double *model,
@@ -924,7 +851,6 @@ int slitdec(        int ncols,
 
     // For the solving of the equation system
     double *l_Aij, *l_bj, *p_Aij, *p_bj;
-    double *diff;
 
     // For the geometry
     xi_ref *xi;
@@ -1002,7 +928,6 @@ int slitdec(        int ncols,
     xi = malloc(MAX_XI * sizeof(xi_ref));
     zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
     m_zeta = malloc(MAX_MZETA * sizeof(int));
-    diff = malloc(MAX_IM * sizeof(double));
     ycen_offset = malloc(ncols * sizeof(int));
 
         // remove integer values from ycen, put into ycen_offset
@@ -1234,7 +1159,9 @@ int slitdec(        int ncols,
         // which we then would have to fit to the distrubtion and then determine,
         // the range that covers 99% of the data.
         // Since that is much more complicated we just use the MAD.
+        /* Compute sigma for outlier rejection (RMS of residuals) */
         cost = 0;
+        tmp = 0;
         isum = 0;
         for (y = 0; y < nrows; y++)
         {
@@ -1242,32 +1169,29 @@ int slitdec(        int ncols,
             {
                 if (mask[im_index(x, y)])
                 {
-                    tmp = model[im_index(x, y)] - im[im_index(x, y)];
-                    diff[isum] = tmp;
-                    tmp /= max(pix_unc[im_index(x, y)], 1);
-                    cost += tmp * tmp;
+                    double resid = model[im_index(x, y)] - im[im_index(x, y)];
+                    tmp += resid * resid;
+                    double resid_scaled = resid / max(pix_unc[im_index(x, y)], 1);
+                    cost += resid_scaled * resid_scaled;
                     isum++;
                 }
             }
         }
         cost /= (isum - (ncols + ny));
-        dev = median_absolute_deviation(diff, isum);
-        // This is the "conversion" factor betweem MAD and STD
-        // i.e. a perfect normal distribution has MAD = sqrt(2/pi) * STD
-        dev *= 1.4826;
+        dev = sqrt(tmp / isum);
 
-        /* Adjust the mask marking outlyers */
-        for (y = 0; y < nrows; y++)
+        /* Adjust the mask marking outliers */
+        if (kappa > 0)
         {
-            for (x = delta_x; x < ncols - delta_x; x++)
+            for (y = 0; y < nrows; y++)
             {
-                // The MAD is significantly smaller than the STD was, since it describes
-                // only the central peak, not the distribution
-                // The factor 40 was chosen, since it is roughly equal to 6 * STD
-                if (fabs(model[im_index(x, y)] - im[im_index(x, y)]) < 40. * dev)
-                    mask[im_index(x, y)] = 1;
-                else
-                    mask[im_index(x, y)] = 0;
+                for (x = delta_x; x < ncols - delta_x; x++)
+                {
+                    if (fabs(model[im_index(x, y)] - im[im_index(x, y)]) < kappa * dev)
+                        mask[im_index(x, y)] = 1;
+                    else
+                        mask[im_index(x, y)] = 0;
+                }
             }
         }
 
@@ -1337,7 +1261,6 @@ int slitdec(        int ncols,
         sP[sp_index(x)] = unc[sp_index(x)] = 0;
     }
 
-    free(diff);
     free(l_Aij);
     free(p_Aij);
     free(p_bj);

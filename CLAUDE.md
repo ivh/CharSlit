@@ -184,7 +184,7 @@ The algorithm:
 - Uses subpixel oversampling (typically 6x) for the slit function
 - Handles slit curvature via polynomial coefficients
 - Handles pixel-to-pixel variations in slit illumination (slitdeltas)
-- Performs outlier rejection by modifying the input mask
+- Performs outlier rejection by modifying the input mask (configurable via `kappa`, disabled if `kappa=0`)
 - Applies smoothing constraints to spectrum and slit function
 
 ### Input Parameters
@@ -195,12 +195,13 @@ The algorithm:
 | `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties (typically from Poisson noise) |
 | `mask` | ndarray (nrows, ncols), uint8 | Pixel mask (0=bad, 1=good). **Modified during execution** |
 | `ycen` | ndarray (ncols,) | Order center line offset from pixel boundary. **Modified during execution** |
-| `slitcurve` | ndarray (ncols, 3) | Polynomial coefficients [c0, c1, c2] for slit curvature |
+| `slitcurve` | ndarray (ncols, n) where n ≤ 6 | Polynomial coefficients [c0..c5] for slit curvature (padded to 6) |
 | `slitdeltas` | ndarray (nrows,) or (ny,) | Pixel-to-pixel horizontal offsets (see below) |
 | `osample` | int | Oversampling factor (default: 6) |
 | `lambda_sP` | float | Smoothing parameter for spectrum (default: 0.0) |
-| `lambda_sL` | float | Smoothing parameter for slit function (default: 0.1) |
+| `lambda_sL` | float | Smoothing parameter for slit function (default: 1.0) |
 | `maxiter` | int | Maximum iterations (default: 20) |
+| `kappa` | float | Outlier rejection threshold in sigma (default: 10.0). Set to 0 to disable. |
 
 ### Important: slitdeltas
 

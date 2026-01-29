@@ -18,7 +18,8 @@ nb::dict slitdec_wrapper(
     int osample,
     double lambda_sP,
     double lambda_sL,
-    int maxiter
+    int maxiter,
+    double kappa
 ) {
     // Get dimensions from input image
     int nrows = im.shape(0);
@@ -116,17 +117,18 @@ nb::dict slitdec_wrapper(
     double* ycen_copy = new double[ncols];
     std::memcpy(ycen_copy, ycen.data(), ncols * sizeof(double));
 
-    // Pad slitcurve to 6 coefficients if needed
+    // Pad slitcurve to 6 coefficients per column (C code uses stride 6)
     double* slitcurve_padded = nullptr;
     bool allocated_slitcurve = false;
-    if (n_coeffs_in < 6) {
+    if (n_coeffs_in != 6) {
         slitcurve_padded = new double[ncols * 6];
         allocated_slitcurve = true;
         // Initialize all to zero
         std::memset(slitcurve_padded, 0, ncols * 6 * sizeof(double));
-        // Copy input coefficients
+        // Copy input coefficients (up to 6)
+        int n_to_copy = (n_coeffs_in < 6) ? n_coeffs_in : 6;
         for (int i = 0; i < ncols; i++) {
-            for (int j = 0; j < n_coeffs_in; j++) {
+            for (int j = 0; j < n_to_copy; j++) {
                 slitcurve_padded[i * 6 + j] = slitcurve.data()[i * n_coeffs_in + j];
             }
         }
@@ -148,6 +150,7 @@ nb::dict slitdec_wrapper(
         lambda_sP,
         lambda_sL,
         maxiter,
+        kappa,
         sP,
         sL,
         model,
@@ -211,6 +214,7 @@ NB_MODULE(charslit, m) {
           nb::arg("lambda_sP") = 0.0,
           nb::arg("lambda_sL") = 1.0,
           nb::arg("maxiter") = 20,
+          nb::arg("kappa") = 10.0,
           "Slit decomposition with slit characterization\n\n"
           "Parameters\n"
           "----------\n"
@@ -222,8 +226,8 @@ NB_MODULE(charslit, m) {
           "    Pixel mask (will be modified by the algorithm)\n"
           "ycen : ndarray (ncols,)\n"
           "    Order centre line offset from pixel row boundary\n"
-          "slitcurve : ndarray (ncols, 3)\n"
-          "    Polynomial coefficients for slit curvature\n"
+          "slitcurve : ndarray (ncols, n) where n <= 6\n"
+          "    Polynomial coefficients for slit curvature (c0..c5), padded to 6\n"
           "slitdeltas : ndarray (nrows,) or (ny,)\n"
           "    Slit deltas. Can be length nrows (will be linearly interpolated to ny)\n"
           "    or length ny = osample * (nrows + 1) + 1 (used directly)\n"
@@ -234,7 +238,10 @@ NB_MODULE(charslit, m) {
           "lambda_sL : float, optional\n"
           "    Smoothing parameter for slit function (default: 0.1)\n"
           "maxiter : int, optional\n"
-          "    Maximum number of iterations (default: 20)\n\n"
+          "    Maximum number of iterations (default: 20)\n"
+          "kappa : float, optional\n"
+          "    Outlier rejection threshold in sigma units (default: 10.0).\n"
+          "    Pixels with |residual| > kappa * sigma are masked. Set to 0 to disable.\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"
