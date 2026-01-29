@@ -204,7 +204,7 @@ static long sl_index(long i)
 #define zeta_index(x, y, z) ((z) + (y)*MAX_ZETA_Z + (x)*MAX_ZETA_Z * _nrows)
 #define mzeta_index(x, y) ((y) + (x)*_nrows)
 #define xi_index(x, y, z) ((z) + 4 * (y) + _ny * 4 * (x))
-#define curve_index(x, y) ((x)*3 + (y))
+#define curve_index(x, y) ((x)*6 + (y))
 #define a_index(x, y) ((y)*n + (x))
 #define r_index(i) (i)
 #define sp_index(i) (i)
@@ -575,7 +575,12 @@ int xi_zeta_tensors(
                 else
                     w = step;
                 dy += step;
-                delta = (slitcurve[curve_index(x, 1)] + slitcurve[curve_index(x, 2)] * (dy - ycen[x])) * (dy - ycen[x]) 
+                double t = dy - ycen[x];
+                delta = t * (slitcurve[curve_index(x, 1)] +
+                        t * (slitcurve[curve_index(x, 2)] +
+                        t * (slitcurve[curve_index(x, 3)] +
+                        t * (slitcurve[curve_index(x, 4)] +
+                        t *  slitcurve[curve_index(x, 5)]))))
                         + slitdeltas[iy];
                 ix1 = delta;
                 ix2 = ix1 + signum(delta);
@@ -952,7 +957,15 @@ int slitdec(        int ncols,
     {
         for (y = -y_lower_lim; y < nrows - y_lower_lim + 1; y++)
         {
-            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] + y * y * slitcurve[curve_index(x, 2)]));
+            double y2 = y * y;
+            double y3 = y2 * y;
+            double y4 = y3 * y;
+            double y5 = y4 * y;
+            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] +
+                           y2 * slitcurve[curve_index(x, 2)] +
+                           y3 * slitcurve[curve_index(x, 3)] +
+                           y4 * slitcurve[curve_index(x, 4)] +
+                           y5 * slitcurve[curve_index(x, 5)]));
             delta_x = max(delta_x, tmp);
         }
     }
