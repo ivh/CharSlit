@@ -67,7 +67,7 @@ degeneracy only as strongly as the sub-pixel phase `frac(delta(iy))`
 sweeps across the slit; for Hsim (5 px tilt across 90 rows) the mode is
 formally full-rank but weakly constrained, so noise leaks in.
 
-Mitigation options (not implemented yet):
+Mitigation options:
 
 1. Post-hoc boxcar of width `osamp_spec` — exact null at fringe
    frequency, but kills all super-resolution
@@ -75,10 +75,46 @@ Mitigation options (not implemented yet):
 3. `lambda_sP > 0` — the `(-1, 2, -1)` stencil has peak penalty at
    Nyquist, so it does hit the fringe mode hardest, but it also
    broadens lines
-4. Selective in-solver regularizer `L = I - mean_over_osamp`: penalty
-   `lambda * Σ_blocks Σ_i (sP_i - mean_i)²`. Surgical on the fringe
-   mode, zero on the coarse-averaged component. Best long-term fix,
-   next on the list to implement.
+4. **Selective in-solver regularizer** `L = I - mean_over_osamp`
+   (IMPLEMENTED as `lambda_fringe`). Penalty
+   `lambda_fringe * Σ_blocks Σ_i (sP_i - mean_i)²`. Surgical on the
+   fringe mode; row-sum is zero so the coarse-averaged spectrum is
+   untouched. Added per-block as `+lambda_fringe*(1-1/s)` on the
+   diagonal and `-lambda_fringe/s` on within-block off-diagonals.
+   Only active when `osamp_spec > 1`. Default `lambda_fringe = 0.0`.
+
+## Finding: lambda_fringe collapses Hsim to a staircase
+
+A sweep of `lambda_fringe` on Hsim at `osamp_spec=3`, `lambda_sP=0`:
+
+| lambda_fringe | max &#124;sP − staircase&#124; | fraction of peak |
+|---------------|------------------------------:|-----------------:|
+| 0             | 301k                         | 28%              |
+| 0.01          | 6571                         | 0.6%             |
+| 0.1           | 700                          | 0.07%            |
+| 1             | 70                           | 0.007%           |
+| 10            | 7                            | 0.0001%          |
+
+Even tiny `lambda_fringe` collapses the fine spectrum to the
+block-mean staircase. This is diagnostic: on Hsim the unregularised
+sub-pixel detail is essentially all fringe-mode noise. There is no
+value of `lambda_fringe` that kills the fringe while preserving real
+super-resolution content, because the data does not contain any.
+
+Mechanistically: Hsim has ~5 px of tilt across 90 slit rows, enough
+for the forward-model normal matrix to be formally full-rank at the
+osamp-period mode, but not enough phase-coverage S/N for the
+non-block-mean content to be determined above noise. The selective
+regulariser correctly reports this by collapsing to the staircase.
+
+For this kind of data the useful product from `osamp_spec > 1` is the
+sub-pixel *centroid / wavelength-zero-point* accuracy (the block-mean
+staircase is still positioned correctly on the fine grid), not
+narrower line profiles. To get real super-resolution above the
+staircase you need more phase coverage across the slit — stronger
+tilt, taller slit, or a designed non-uniform `slitdeltas` dither
+(difficult on a pupil-sliced stable spectrograph without moving
+parts).
 
 **2. `lambda_sP` is not auto-scaled with `osamp_spec`.** The same
 `lambda_sP=1.0` is a weaker prior per unit wavelength on a finer grid.
@@ -93,15 +129,17 @@ Acceptable for `osamp_spec ≤ 4`. Memory grows as `osamp_spec²`.
 - `slitdec/slitdec.c` — `xi_zeta_tensors`, `slitdec`, index macros,
   allocations, matrix-assembly loops, boundary zeroing, `nx > ncols_fine`
   guard
-- `slitdec/slitdec.h` — `osamp_spec` added to both signatures
-- `slitdec/slitdec_wrapper.cpp` — `osamp_spec` arg (default 1), output
-  shapes `ncols * osamp_spec`, docstring
+- `slitdec/slitdec.h` — `osamp_spec`, `lambda_fringe` in signatures
+- `slitdec/slitdec_wrapper.cpp` — `osamp_spec` (default 1),
+  `lambda_fringe` (default 0.0), output shapes `ncols * osamp_spec`,
+  docstring
 
 No changes to `make_curvedelta.py`, `plotting.py`, tests, or fixtures.
 
 ## Pending
 
-- Implement selective regularizer (option 4 above)
 - Add regression test pinning `osamp_spec=1` to a saved reference
 - Add synthetic super-resolution test (tilted slit, narrow line,
-  `osamp_spec=3`)
+  `osamp_spec=3`) — should show a non-trivial departure from
+  staircase at moderate `lambda_fringe`, confirming the regulariser
+  preserves genuine super-resolution content when it exists

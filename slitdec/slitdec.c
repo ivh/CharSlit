@@ -814,6 +814,7 @@ int slitdec(        int ncols,
                     int osamp_spec,
                     double lambda_sP,
                     double lambda_sL,
+                    double lambda_fringe,
                     int maxiter,
                     double kappa,
                     double *sP,
@@ -1133,6 +1134,36 @@ int slitdec(        int ncols,
             }
             p_Aij[paij_index(ncols_fine - 1, delta_x_fine - 1)] -= lambda; /* Lower diagonal */
             p_Aij[paij_index(ncols_fine - 1, delta_x_fine)] += lambda;     /* Main diagonal  */
+        }
+
+        /* Selective regularizer targeting the osamp-period fringe mode.
+           Penalty: lambda_fringe * sum_blocks sum_i (sP[i] - mean_block)^2.
+           The operator L = I - (1/s)*J per block of size s is symmetric and
+           idempotent, so L^T L = L; we add lambda_fringe * L directly to
+           the normal matrix. The row-sum is zero, so the coarse-averaged
+           component is untouched and the penalty is surgical on the
+           osamp-period null direction. */
+        if (lambda_fringe > 0.e0 && osamp_spec > 1)
+        {
+            double s_inv = 1.0 / (double)osamp_spec;
+            double diag_add = lambda_fringe * (1.0 - s_inv);
+            double off_add  = -lambda_fringe * s_inv;
+            for (int c = 0; c < ncols; c++)
+            {
+                for (int i = 0; i < osamp_spec; i++)
+                {
+                    int xi_fine = c * osamp_spec + i;
+                    for (int j = 0; j < osamp_spec; j++)
+                    {
+                        int xj_fine = c * osamp_spec + j;
+                        int k = xj_fine - xi_fine + delta_x_fine;
+                        if (i == j)
+                            p_Aij[paij_index(xi_fine, k)] += diag_add;
+                        else
+                            p_Aij[paij_index(xi_fine, k)] += off_add;
+                    }
+                }
+            }
         }
 
 #if REGULARIZE_DIAGONAL

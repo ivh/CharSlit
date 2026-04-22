@@ -19,6 +19,7 @@ nb::dict slitdec_wrapper(
     int osamp_spec,
     double lambda_sP,
     double lambda_sL,
+    double lambda_fringe,
     int maxiter,
     double kappa
 ) {
@@ -156,6 +157,7 @@ nb::dict slitdec_wrapper(
         osamp_spec,
         lambda_sP,
         lambda_sL,
+        lambda_fringe,
         maxiter,
         kappa,
         sP,
@@ -221,6 +223,7 @@ NB_MODULE(charslit, m) {
           nb::arg("osamp_spec") = 1,
           nb::arg("lambda_sP") = 0.0,
           nb::arg("lambda_sL") = 1.0,
+          nb::arg("lambda_fringe") = 0.0,
           nb::arg("maxiter") = 20,
           nb::arg("kappa") = 10.0,
           "Slit decomposition with slit characterization\n\n"
@@ -252,6 +255,12 @@ NB_MODULE(charslit, m) {
           "    first-difference penalty on adjacent fine bins.\n"
           "lambda_sL : float, optional\n"
           "    Smoothing parameter for slit function (default: 1.0)\n"
+          "lambda_fringe : float, optional\n"
+          "    Weight of the selective regularizer targeting the osamp-period\n"
+          "    fringe mode. Only active for osamp_spec > 1 (default: 0.0).\n"
+          "    Penalty is sum_blocks sum_i (sP_i - mean_block)^2 with block\n"
+          "    size osamp_spec; surgical on the osamp-period null direction,\n"
+          "    does not broaden lines or alter the coarse-averaged spectrum.\n"
           "maxiter : int, optional\n"
           "    Maximum number of iterations (default: 20)\n"
           "kappa : float, optional\n"
