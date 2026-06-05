@@ -1199,8 +1199,11 @@ int slitdec(        int ncols,
             printf("-----------\n");
         }
 #endif
-        /* Check for convergence */
-    } while (((iter++ < maxiter) && (cost_old - cost > ftol)) || ((isfinite(cost) == 0) || ((isfinite(cost_old) == 0))));
+        /* Check for convergence. maxiter is an unconditional upper bound;
+           previously the non-finite-cost retry bypassed it and could hang
+           forever when the solver produced NaNs (e.g. kappa=0 leaves NaN
+           cells un-masked). */
+    } while ((iter++ < maxiter) && ((cost_old - cost > ftol) || !isfinite(cost) || !isfinite(cost_old)));
 
     if (iter >= maxiter - 1)
     {
