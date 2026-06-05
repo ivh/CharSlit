@@ -56,3 +56,6 @@ dist/
 *.egg
 
 external
+
+# committed regression-test golden references (override *.npz ignore above)
+!tests/golden/*.npz
