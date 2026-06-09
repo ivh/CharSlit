@@ -86,6 +86,20 @@ i.e. at this S/N the recovery is **geometry-limited, not noise-limited**.
    consistent with OSAMP_SPEC.md's note that the wavelength zero-point is
    the robust product even when shape recovery is marginal.
 
+6. **Gains continue past s=3 and saturate near s=5**
+   (`--osamps 1 2 3 4 5 6 --fringes 0 --tag _ssweep`): rms_cont = 0.107,
+   0.081, 0.053, 0.039, 0.0345, 0.0355 for s = 1..6. Beyond s~5 the
+   geometry/noise floor is reached and the recovered FWHM starts to
+   undershoot slightly (0.85-0.87 px vs 0.894 truth).
+
+7. **At low S/N the optimal lambda_fringe becomes small-but-nonzero**
+   (`--amp 100 --tag _lowsn`, peak ~90 counts): lambda_fringe=0 lets fringe
+   noise leak in (rms_cont 0.12-0.14 at s=2/3, centroid off by up to
+   0.2 px), while lambda_fringe=0.001 restores a clean recovery (rms_cont
+   ~0.091, still beating s=1 at 0.112). Practical rule: lambda_fringe
+   should scale with the noise level — 0 when the tilt-phase coverage is
+   strong and S/N is high, ~1e-3 otherwise.
+
 ## Outputs
 
 - `experiment_synthetic_lsf.png` / `.npz` — main run (gitignored; regenerate
