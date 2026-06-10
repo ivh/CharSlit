@@ -75,11 +75,13 @@ def cut_swath(img_path, tw_path, chip, order, nrows=None, trim=4,
               x0=0, width=None, verbose=True, xbin=1):
     """x0/width select a column block (0-based detector columns).
 
-    With xbin=2 the block is binned pairwise in x: both native columns of
-    a pair are cut with a single integer trace shift (from the pair-centre
-    trace value) and summed; uncertainties add in quadrature. The tilt
-    coefficients are divided by xbin since delta is then measured in
-    binned pixels, while t (rows) is unchanged."""
+    With xbin>1 the block is rebinned in x: the native columns of a bin
+    are cut with a single integer trace shift (from the bin-centre trace
+    value) and summed; uncertainties add in quadrature. xbin may be
+    fractional (e.g. sqrt(3)): boundary native columns are then split
+    flux-conservingly between adjacent bins (which mildly correlates
+    their noise). The tilt coefficients are divided by xbin since delta
+    is then measured in binned pixels, while t (rows) is unchanged."""
     with fits.open(img_path) as h:
         im_full = h[f"CHIP{chip}.INT1"].data.astype(float)
         err_full = h[f"CHIP{chip}ERR.INT1"].data.astype(float)
@@ -120,17 +122,22 @@ def cut_swath(img_path, tw_path, chip, order, nrows=None, trim=4,
               f"(expect ~{xm:.0f}), "
               f"tilt = {b_mid + 2 * c_mid * yc_mid:+.4f} px/row")
 
-    if width % xbin:
+    if float(xbin) == int(xbin) and width % int(xbin):
         raise ValueError("width must be divisible by xbin")
-    wout = width // xbin
+    wout = int(width / xbin + 1e-9)
     im = np.full((nrows, wout), np.nan)
     unc = np.full((nrows, wout), np.nan)
     ycen = np.zeros(wout)
     slitcurve = np.zeros((wout, 3))
 
     for i in range(wout):
-        grp = cols[i * xbin:(i + 1) * xbin]
-        x1c = grp.mean() + 1.0  # 1-based pair centre
+        # bin extent [e0, e1) in pixel-edge coords relative to x0; native
+        # column j covers [j, j+1), overlap fraction = weight
+        e0, e1 = i * xbin, (i + 1) * xbin
+        js = np.arange(int(np.floor(e0 + 1e-9)), int(np.ceil(e1 - 1e-9)))
+        w = np.clip(np.minimum(e1, js + 1) - np.maximum(e0, js), 0.0, 1.0)
+        grp = cols[js]
+        x1c = x0 + 0.5 * (e0 + e1) + 0.5  # 1-based bin centre
         yc_i = polyval_inc(p_all, x1c)
         # 1-based trace centre -> 0-based row index of pixel containing it
         y0 = yc_i - 1.0
@@ -140,9 +147,9 @@ def cut_swath(img_path, tw_path, chip, order, nrows=None, trim=4,
         hi = lo + nrows
         src_lo, src_hi = max(lo, 0), min(hi, nfull)
         dst_lo, dst_hi = src_lo - lo, src_hi - lo
-        im[dst_lo:dst_hi, i] = im_full[src_lo:src_hi, grp].sum(axis=1)
+        im[dst_lo:dst_hi, i] = (im_full[src_lo:src_hi][:, grp] * w).sum(axis=1)
         unc[dst_lo:dst_hi, i] = np.sqrt(
-            (err_full[src_lo:src_hi, grp] ** 2).sum(axis=1))
+            ((err_full[src_lo:src_hi][:, grp] * w) ** 2).sum(axis=1))
 
         b = polyval_inc(p_b, x1c)
         c = polyval_inc(p_c, x1c)
