@@ -231,6 +231,10 @@ def main():
     p.add_argument("--slope-bot", type=float, default=0.1)
     p.add_argument("--slope-top", type=float, default=0.001)
     p.add_argument("--amp", type=float, default=4000.0)
+    p.add_argument("--tophat-w", type=float, default=0.8,
+                   help="full width of the top-hat core in detector px")
+    p.add_argument("--sigma", type=float, default=0.25,
+                   help="Gaussian sigma the top-hat is convolved with [px]")
     p.add_argument("--osamps", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--fringes", type=float, nargs="+",
                    default=[0.0, 0.001, 0.01, 0.1, 1.0])
@@ -242,7 +246,7 @@ def main():
     line_x0 = ncols / 2 + 0.37  # deliberately off pixel centre
     win = 5.0
 
-    u_grid, lsf = make_lsf()
+    u_grid, lsf = make_lsf(tophat_w=args.tophat_w, sigma=args.sigma)
     c1, c2, jc = tilt_coeffs(nrows, args.slope_bot, args.slope_top)
     print(f"tilt: {args.slope_bot} -> {args.slope_top} px/row over {nrows} "
           f"rows  =>  slitcurve c1={c1:.6f}, c2={c2:.3e} (t = y - {jc})")
