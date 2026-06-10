@@ -109,7 +109,7 @@ static long curve_index(long x, long y)
 
 static long a_index(long x, long y)
 {
-    long i = _n * y + x;
+    long i = _nd * x + y;
     if ((i < 0) | (i >= MAX_A))
     {
         printf("INDEX OUT OF BOUNDS. a[%li, %li]\n", x, y);
@@ -140,7 +140,7 @@ static long sp_index(long i)
 
 static long laij_index(long x, long y)
 {
-    long i = ((y)*_ny) + (x);
+    long i = (x)*MAX_LAIJ_Y + (y);
     if ((i < 0) | (i >= MAX_LAIJ))
     {
         printf("INDEX OUT OF BOUNDS. l_Aij[%li, %li]\n", x, y);
@@ -151,7 +151,7 @@ static long laij_index(long x, long y)
 
 static long paij_index(long x, long y)
 {
-    long i = ((y)*_ncols) + (x);
+    long i = (x)*_nx + (y);
     if ((i < 0) | (i >= MAX_PAIJ))
     {
         printf("INDEX OUT OF BOUNDS. p_Aij[%li, %li]\n", x, y);
@@ -205,11 +205,14 @@ static long sl_index(long i)
 #define mzeta_index(x, y) ((y) + (x)*_nrows)
 #define xi_index(x, y, z) ((z) + 4 * (y) + _ny * 4 * (x))
 #define curve_index(x, y) ((x)*6 + (y))
-#define a_index(x, y) ((y)*n + (x))
+// Band matrices are stored row-major (band entries for one row are
+// contiguous): this matches the access pattern of both the SLE fill
+// loops and bandsol, unlike the previous column-major layout.
+#define a_index(x, y) ((x)*nd + (y))
 #define r_index(i) (i)
 #define sp_index(i) (i)
-#define laij_index(x, y) ((y)*ny) + (x)
-#define paij_index(x, y) ((y)*ncols) + (x)
+#define laij_index(x, y) ((x) * (4 * osample + 1) + (y))
+#define paij_index(x, y) ((x)*nx + (y))
 #define lbj_index(i) (i)
 #define pbj_index(i) (i)
 #define im_index(x, y) ((y)*ncols) + (x)
@@ -953,8 +956,8 @@ int slitdec(        int ncols,
     code : int
         0 on success, -1 on failure (see also bandsol)
     */
-    int x, xx, xxx, y, yy, iy, jy, n, m, nx, ny;
-    double norm, dev, lambda, diag_tot, ww, www, tmp;
+    int x, xx, y, yy, iy, n, m, nx, ny;
+    double norm, dev, lambda, diag_tot, ww, tmp;
     double sP_change, sP_stop, sP_med;
     int iter, delta_x;
     unsigned int isum;
@@ -964,6 +967,9 @@ int slitdec(        int ncols,
     // For the solving of the equation system
     double *l_Aij, *l_bj, *p_Aij, *p_bj;
     double *sP_old, *sP_diff;
+    // Scratch buffers for per-pixel merged zeta weights (mz <= 3 * (osample + 1))
+    double *zw;
+    int *zk;
 
     // For the geometry
     xi_ref *xi;
@@ -1038,6 +1044,8 @@ int slitdec(        int ncols,
     p_Aij = malloc(MAX_PAIJ * sizeof(double));
     l_bj = malloc(MAX_LBJ * sizeof(double));
     p_bj = malloc(MAX_PBJ * sizeof(double));
+    zw = malloc(MAX_ZETA_Z * sizeof(double));
+    zk = malloc(MAX_ZETA_Z * sizeof(int));
     xi = malloc(MAX_XI * sizeof(xi_ref));
     zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
     m_zeta = malloc(MAX_MZETA * sizeof(int));
@@ -1066,38 +1074,71 @@ int slitdec(        int ncols,
         for (iy = 0; iy < MAX_LAIJ; iy++)
             l_Aij[iy] = 0;
 
-        /* Fill in SLE arrays for slit function */
-        diag_tot = 0.e0;
-        for (iy = 0; iy < ny; iy++)
+        /* Fill in SLE arrays for slit function.
+           Both SLE matrices are sums over detector pixels of all pairs of
+           subpixels contributing to that pixel, i.e. pairs of entries in the
+           pixel's zeta list (each active xi entry corresponds to exactly one
+           zeta entry). Iterating pixel-centrically reads zeta sequentially,
+           skips masked pixels entirely and never touches the much larger xi
+           tensor. Accumulation order differs from the historic xi-centric
+           loop only at the rounding level. */
+        for (xx = 0; xx < ncols; xx++)
         {
-            for (x = 0; x < ncols; x++)
+            for (yy = 0; yy < nrows; yy++)
             {
-                for (n = 0; n < 4; n++)
+                const int mz = m_zeta[mzeta_index(xx, yy)];
+                if (mz <= 0 || !mask[im_index(xx, yy)])
+                    continue;
+                const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
+                const double imv = im[im_index(xx, yy)];
+                /* Merge entries sharing the same subpixel index iy: only the
+                   summed weight enters both the matrix and the RHS */
+                int nk = 0;
+                for (m = 0; m < mz; m++)
                 {
-                    ww = xi[xi_index(x, iy, n)].w;
-                    if (ww > 0)
+                    const int key = zrow[m].iy;
+                    const double v = sP[sp_index(zrow[m].x)] * zrow[m].w;
+                    for (n = 0; n < nk; n++)
                     {
-                        xx = xi[xi_index(x, iy, n)].x;
-                        yy = xi[xi_index(x, iy, n)].y;
-                        if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows)
+                        if (zk[n] == key)
                         {
-                            if (m_zeta[mzeta_index(xx, yy)] > 0)
-                            {
-                                for (m = 0; m < m_zeta[mzeta_index(xx, yy)]; m++)
-                                {
-                                    xxx = zeta[zeta_index(xx, yy, m)].x;
-                                    jy = zeta[zeta_index(xx, yy, m)].iy;
-                                    www = zeta[zeta_index(xx, yy, m)].w;
-                                    l_Aij[laij_index(iy, jy - iy + 2 * osample)] += sP[sp_index(xxx)] * sP[sp_index(x)] * www * ww * mask[im_index(xx, yy)];
-                                }
-                                l_bj[lbj_index(iy)] += im[im_index(xx, yy)] * mask[im_index(xx, yy)] * sP[sp_index(x)] * ww;
-                            }
+                            zw[n] += v;
+                            break;
                         }
                     }
+                    if (n == nk)
+                    {
+                        zk[nk] = key;
+                        zw[nk++] = v;
+                    }
+                }
+                /* The matrix is symmetric: accumulate each unordered pair
+                   once into the upper bands; mirrored below after the fill */
+                for (m = 0; m < nk; m++)
+                {
+                    iy = zk[m];
+                    const double um = zw[m];
+                    l_Aij[laij_index(iy, 2 * osample)] += um * um;
+                    for (n = m + 1; n < nk; n++)
+                    {
+                        const int iyn = zk[n];
+                        const int lo = min(iy, iyn);
+                        const int d = abs(iyn - iy);
+                        l_Aij[laij_index(lo, d + 2 * osample)] += zw[n] * um;
+                    }
+                    l_bj[lbj_index(iy)] += imv * um;
                 }
             }
-            diag_tot += l_Aij[laij_index(iy, 2 * osample)];
         }
+
+        /* Mirror the upper bands into the lower bands: A[r+d, 2o-d] = A[r, 2o+d] */
+        for (m = 1; m <= 2 * osample; m++)
+            for (iy = 0; iy < ny - m; iy++)
+                l_Aij[laij_index(iy + m, 2 * osample - m)] = l_Aij[laij_index(iy, 2 * osample + m)];
+
+        diag_tot = 0.e0;
+        for (iy = 0; iy < ny; iy++)
+            diag_tot += l_Aij[laij_index(iy, 2 * osample)];
 
         /* Scale regularization parameters */
         lambda = lambda_sL * diag_tot / ny;
@@ -1157,35 +1198,59 @@ int slitdec(        int ncols,
         for (x = 0; x < MAX_PAIJ; x++)
             p_Aij[x] = 0;
 
-        for (x = 0; x < ncols; x++)
+        /* Pixel-centric fill, see comment at the slit function SLE above */
+        for (xx = 0; xx < ncols; xx++)
         {
-            for (iy = 0; iy < ny; iy++)
+            for (yy = 0; yy < nrows; yy++)
             {
-                for (n = 0; n < 4; n++)
+                const int mz = m_zeta[mzeta_index(xx, yy)];
+                if (mz <= 0 || !mask[im_index(xx, yy)])
+                    continue;
+                const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
+                const double imv = im[im_index(xx, yy)];
+                /* Merge entries sharing the same source column x; with small
+                   curvature this collapses the list to just a few entries */
+                int nk = 0;
+                for (m = 0; m < mz; m++)
                 {
-                    ww = xi[xi_index(x, iy, n)].w;
-                    if (ww > 0)
+                    const int key = zrow[m].x;
+                    const double v = sL[sl_index(zrow[m].iy)] * zrow[m].w;
+                    for (n = 0; n < nk; n++)
                     {
-                        xx = xi[xi_index(x, iy, n)].x;
-                        yy = xi[xi_index(x, iy, n)].y;
-                        if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows)
+                        if (zk[n] == key)
                         {
-                            if (m_zeta[mzeta_index(xx, yy)] > 0)
-                            {
-                                for (m = 0; m < m_zeta[mzeta_index(xx, yy)]; m++)
-                                {
-                                    xxx = zeta[zeta_index(xx, yy, m)].x;
-                                    jy = zeta[zeta_index(xx, yy, m)].iy;
-                                    www = zeta[zeta_index(xx, yy, m)].w;
-                                    p_Aij[paij_index(x, xxx - x + 2 * delta_x)] += sL[sl_index(jy)] * sL[sl_index(iy)] * www * ww * mask[im_index(xx, yy)];
-                                }
-                                p_bj[pbj_index(x)] += im[im_index(xx, yy)] * mask[im_index(xx, yy)] * sL[sl_index(iy)] * ww;
-                            }
+                            zw[n] += v;
+                            break;
                         }
                     }
+                    if (n == nk)
+                    {
+                        zk[nk] = key;
+                        zw[nk++] = v;
+                    }
+                }
+                /* Symmetric matrix: upper bands only, mirrored after the fill */
+                for (m = 0; m < nk; m++)
+                {
+                    x = zk[m];
+                    const double um = zw[m];
+                    p_Aij[paij_index(x, 2 * delta_x)] += um * um;
+                    for (n = m + 1; n < nk; n++)
+                    {
+                        const int xn = zk[n];
+                        const int lo = min(x, xn);
+                        const int d = abs(xn - x);
+                        p_Aij[paij_index(lo, d + 2 * delta_x)] += zw[n] * um;
+                    }
+                    p_bj[pbj_index(x)] += imv * um;
                 }
             }
         }
+
+        /* Mirror the upper bands into the lower bands */
+        for (m = 1; m <= 2 * delta_x; m++)
+            for (x = 0; x < ncols - m; x++)
+                p_Aij[paij_index(x + m, 2 * delta_x - m)] = p_Aij[paij_index(x, 2 * delta_x + m)];
 
         if (lambda_sP > 0.e0)
         {
@@ -1376,6 +1441,8 @@ int slitdec(        int ncols,
     free(p_Aij);
     free(p_bj);
     free(l_bj);
+    free(zw);
+    free(zk);
 
     free(xi);
     free(zeta);
