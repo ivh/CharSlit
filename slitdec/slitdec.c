@@ -42,7 +42,6 @@ int _nd = 0;
 #define MAX_ZETA_Z (3 * ((_osample) + 1))
 #define MAX_ZETA (MAX_ZETA_X * MAX_ZETA_Y * MAX_ZETA_Z)
 #define MAX_MZETA ((_ncols) * (_nrows))
-#define MAX_XI ((_ncols) * (_ny)*4)
 #define MAX_CRV_X (_ncols)
 #define MAX_CRV_Y (3)
 #define MAX_CRV (MAX_CRV_X * MAX_CRV_Y)
@@ -80,17 +79,6 @@ static long mzeta_index(long x, long y)
     if ((i < 0) | (i >= MAX_MZETA))
     {
         printf("INDEX OUT OF BOUNDS. Mzeta[%li, %li]\n", x, y);
-        return 0;
-    }
-    return i;
-}
-
-static long xi_index(long x, long y, long z)
-{
-    long i = z + 4 * y + _ny * 4 * x;
-    if ((i < 0) | (i >= MAX_XI))
-    {
-        printf("INDEX OUT OF BOUNDS. Xi[%li, %li, %li]\n", x, y, z);
         return 0;
     }
     return i;
@@ -203,7 +191,6 @@ static long sl_index(long i)
 #else
 #define zeta_index(x, y, z) ((z) + (y)*MAX_ZETA_Z + (x)*MAX_ZETA_Z * _nrows)
 #define mzeta_index(x, y) ((y) + (x)*_nrows)
-#define xi_index(x, y, z) ((z) + 4 * (y) + _ny * 4 * (x))
 #define curve_index(x, y) ((x)*6 + (y))
 // Band matrices are stored row-major (band entries for one row are
 // contiguous): this matches the access pattern of both the SLE fill
@@ -432,7 +419,20 @@ double quick_select_percentile(double arr[], unsigned int n, double percentile)
     }
 }
 
-int xi_zeta_tensors(
+static void zeta_add(zeta_ref *zeta, int *m_zeta, int ncols, int nrows, int osample,
+                     int x, int iy, int xx, int yy, double w)
+{
+    if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
+    {
+        const int m = m_zeta[mzeta_index(xx, yy)];
+        zeta[zeta_index(xx, yy, m)].x = x;
+        zeta[zeta_index(xx, yy, m)].iy = iy;
+        zeta[zeta_index(xx, yy, m)].w = w;
+        m_zeta[mzeta_index(xx, yy)]++;
+    }
+}
+
+int zeta_tensors(
     int ncols,
     int nrows,
     int ny,
@@ -442,13 +442,19 @@ int xi_zeta_tensors(
     int osample,
     double *slitcurve,
     double *slitdeltas,
-    xi_ref *xi,
     zeta_ref *zeta,
     int *m_zeta)
 {
     /*
-    Create the Xi and Zeta tensors, that describe the contribution of each pixel to the subpixels of the image,
-    Considering the curvature of the slit.
+    Create the zeta tensor, which describes the contribution of each subpixel
+    of the oversampled slit function to each detector pixel, considering the
+    curvature of the slit.
+
+    Historically this routine also built the inverse mapping ("xi" tensor,
+    subpixel -> detector pixels). Since the SLE fill loops in slitdec became
+    pixel-centric, only zeta is needed, which also collapses the bookkeeping
+    of which xi corner (LL/LR/UL/UR) a contribution belongs to: the zeta
+    insertions were identical for all corner cases.
 
     Parameters
     ----------
@@ -466,14 +472,12 @@ int xi_zeta_tensors(
         Number of detector pixels below the pixel containing the central line ycen
     osample : int
         Subpixel ovsersampling factor
-    slitcurve : double array of shape (ncols, 3)
-        Parabolic fit to the slit image curvature.
-        For column d_x = slitcurve[ncols][0] +  slitcurve[ncols][1] *d_y + slitcurve[ncols][2] *d_y^2,
+    slitcurve : double array of shape (ncols, 6)
+        Polynomial fit to the slit image curvature.
+        For column d_x = sum_k slitcurve[ncols][k] * d_y^k,
         where d_y is the offset from the central line ycen.
-        Thus central subpixel of omega[x][y'][delta_x][iy'] does not stick out of column x.
-    xi : (out) xi_ref array of shape (ncols, ny, 4)
-        Convolution tensor telling the coordinates of detector
-        pixels on which {x, iy} element falls and the corresponding projections.
+    slitdeltas : double array of shape (ny,)
+        Additional per-subpixel horizontal offsets
     zeta : (out) zeta_ref array of shape (ncols, nrows, 3 * (osample + 1))
         Convolution tensor telling the coordinates of subpixels {x, iy} contributing
         to detector pixel {x, y}.
@@ -485,46 +489,22 @@ int xi_zeta_tensors(
     code : int
         0 on success, -1 on failure
     */
-    int x, xx, y, yy, ix, ix1, ix2, iy, iy1, iy2, m;
+    int x, xx, y, yy, ix1, ix2, iy, iy1, iy2;
     double step, delta, dy, w, d1, d2;
 
     step = 1.e0 / osample;
 
-    /* Clean xi */
+    /* Clean zeta counts. The zeta entries themselves need no initialization:
+       only the first m_zeta[x, y] entries of each list are ever read. */
     for (x = 0; x < ncols; x++)
-    {
-        for (iy = 0; iy < ny; iy++)
-        {
-            for (m = 0; m < 4; m++)
-            {
-                xi[xi_index(x, iy, m)].x = -1;
-                xi[xi_index(x, iy, m)].y = -1;
-                xi[xi_index(x, iy, m)].w = 0.;
-            }
-        }
-    }
-
-    /* Clean zeta */
-    for (x = 0; x < ncols; x++)
-    {
         for (y = 0; y < nrows; y++)
-        {
             m_zeta[mzeta_index(x, y)] = 0;
-            for (ix = 0; ix < MAX_ZETA_Z; ix++)
-            {
-                zeta[zeta_index(x, y, ix)].x = -1;
-                zeta[zeta_index(x, y, ix)].iy = -1;
-                zeta[zeta_index(x, y, ix)].w = 0.;
-            }
-        }
-    }
 
     /*
-    Construct the xi and zeta tensors. They contain pixel references and contribution.
-    values going from a given subpixel to other pixels (xi) and coming from other subpixels
-    to a given detector pixel (zeta).
-    Note, that xi and zeta are used in the equations for sL, sP and for the model but they
-    do not involve the data, only the geometry. Thus it can be pre-computed once.
+    Construct the zeta tensor. It contains pixel references and contribution
+    values coming from subpixels to a given detector pixel.
+    Note that zeta is used in the equations for sL, sP and for the model but it
+    does not involve the data, only the geometry. Thus it can be pre-computed once.
     */
     for (x = 0; x < ncols; x++)
     {
@@ -571,35 +551,23 @@ int xi_zeta_tensors(
             d1 = step;
         d2 = step - d1;
 
-        /*
-        The final hurdle for 2D slit decomposition is to construct two 3D reference tensors. We proceed
-        similar to 1D case except that now each iy subpixel can be shifted left or right following
-        the curvature of the slit image on the detector. We assume for now that each subpixel is
-        exactly 1 detector pixel wide. This may not be exactly true if the curvature changes accross
-        the focal plane but will deal with it when the necessity will become apparent. For now we
-        just assume that a shift delta the weight w assigned to subpixel iy is divided between
-        ix1=int(delta) and ix2=int(delta)+signum(delta) as (1-|delta-ix1|)*w and |delta-ix1|*w.
-
-        The curvature is given by a quadratic polynomial evaluated from an approximation for column
-        x: delta = slitcurve[x][0] + slitcurve[x][1] * (y-yc[x]) + slitcurve[x][2] * (y-yc[x])^2.
-        It looks easy except that y and yc are set in the global detector coordinate system rather than
-        in the shifted and cropped swath passed to slit_func_2d. One possible solution I will try here
-        is to modify slitcurve before the call such as:
-        delta = slitcurve'[x][0] + slitcurve'[x][1] * (y'-ycen[x]) + slitcurve'[x][2] * (y'-ycen[x])^2
-        where y' = y - floor(yc).
-        */
-
         /* Define initial distance from ycen       */
         /* It is given by the center of the first  */
         /* subpixel falling into pixel y_lower_lim */
         dy = ycen[x] - floor((y_lower_lim + ycen[x]) / step) * step - step;
 
         /*
-        Now we go detector pixels x and y incrementing subpixels looking for their controibutions
+        Now we go detector pixels x and y incrementing subpixels looking for their contributions
         to the current and adjacent pixels. Note that the curvature/tilt of the projected slit
-        image could be so large that subpixel iy may no contribute to column x at all. On the
+        image could be so large that subpixel iy may not contribute to column x at all. On the
         other hand, subpixels around ycen by definition must contribute to pixel x,y.
-        3rd index in xi refers corners of pixel xx,y: 0:LL, 1:LR, 2:UL, 3:UR.
+
+        Each subpixel is assumed to be exactly 1 detector pixel wide; a horizontal shift delta
+        divides its weight w between columns ix1=int(delta) and ix2=ix1+signum(delta) as
+        (1-|delta-ix1|)*w and |delta-ix1|*w. The yy offset is required because the iy subpixel
+        contributes to the yy row in the xx column of detector pixels where yy and y are in the
+        same row. In the packed array this is not necessarily true. Instead, what we know is:
+        y+ycen_offset[x] == yy+ycen_offset[xx]
         */
 
         for (y = 0; y < nrows; y++)
@@ -626,263 +594,39 @@ int xi_zeta_tensors(
                 ix1 = delta;
                 ix2 = ix1 + signum(delta);
 
-                /* Three cases: subpixel on the bottom boundary of row y, intermediate subpixels and top boundary */
-
-                if (iy == iy1) /* Case A: Subpixel iy is entering detector row y */
+                if (ix1 < ix2) /* Subpixel iy shifts to the right from column x */
                 {
-                    if (ix1 < ix2) /* Subpixel iy shifts to the right from column x  */
-                    {
-                        if (x + ix1 >= 0 && x + ix2 < ncols)
-                        {
-                            xx = x + ix1; /* Upper right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 3)].x = xx;
-                            xi[xi_index(x, iy, 3)].y = yy;
-                            xi[xi_index(x, iy, 3)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 3)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 3)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix2; /* Upper left corner of subpixel iy */
-                            // This offset is required because the iy subpixel
-                            // is going to contribute to the yy row in xx column
-                            // of detector pixels where yy and y are in the same
-                            // row. In the packed array this is not necessarily true.
-                            // Instead, what we know is that:
-                            // y+ycen_offset[x] == yy+ycen_offset[xx]
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-
-                            xi[xi_index(x, iy, 2)].x = xx;
-                            xi[xi_index(x, iy, 2)].y = yy;
-                            xi[xi_index(x, iy, 2)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 2)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 2)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
-                    {
-                        if (x + ix2 >= 0 && x + ix1 < ncols)
-                        {
-                            xx = x + ix2; /* Upper left corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 2)].x = xx;
-                            xi[xi_index(x, iy, 2)].y = yy;
-                            xi[xi_index(x, iy, 2)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 2)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 2)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix1; /* Upper right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 3)].x = xx;
-                            xi[xi_index(x, iy, 3)].y = yy;
-                            xi[xi_index(x, iy, 3)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 3)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 3)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        xx = x + ix1; /* Subpixel iy stays inside column x */
-                        yy = y + ycen_offset[x] - ycen_offset[xx];
-                        xi[xi_index(x, iy, 2)].x = xx;
-                        xi[xi_index(x, iy, 2)].y = yy;
-                        xi[xi_index(x, iy, 2)].w = w;
-                        if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
-                        {
-                            m = m_zeta[mzeta_index(xx, yy)];
-                            zeta[zeta_index(xx, yy, m)].x = x;
-                            zeta[zeta_index(xx, yy, m)].iy = iy;
-                            zeta[zeta_index(xx, yy, m)].w = w;
-                            m_zeta[mzeta_index(xx, yy)]++;
-                        }
-                    }
-                }
-                else if (iy == iy2) /* Case C: Subpixel iy is leaving detector row y */
-                {
-                    if (ix1 < ix2) /* Subpixel iy shifts to the right from column x */
-                    {
-                        if (x + ix1 >= 0 && x + ix2 < ncols)
-                        {
-                            xx = x + ix1; /* Bottom right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 1)].x = xx;
-                            xi[xi_index(x, iy, 1)].y = yy;
-                            xi[xi_index(x, iy, 1)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 1)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 1)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix2; /* Bottom left corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 0)].x = xx;
-                            xi[xi_index(x, iy, 0)].y = yy;
-                            xi[xi_index(x, iy, 0)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 0)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 0)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
-                    {
-                        if (x + ix2 >= 0 && x + ix1 < ncols)
-                        {
-                            xx = x + ix2; /* Bottom left corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 0)].x = xx;
-                            xi[xi_index(x, iy, 0)].y = yy;
-                            xi[xi_index(x, iy, 0)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 0)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 0)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix1; /* Bottom right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 1)].x = xx;
-                            xi[xi_index(x, iy, 1)].y = yy;
-                            xi[xi_index(x, iy, 1)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 1)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 1)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else /* Subpixel iy stays inside column x        */
+                    if (x + ix1 >= 0 && x + ix2 < ncols)
                     {
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        xi[xi_index(x, iy, 0)].x = xx;
-                        xi[xi_index(x, iy, 0)].y = yy;
-                        xi[xi_index(x, iy, 0)].w = w;
-                        if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
-                        {
-                            m = m_zeta[mzeta_index(xx, yy)];
-                            zeta[zeta_index(xx, yy, m)].x = x;
-                            zeta[zeta_index(xx, yy, m)].iy = iy;
-                            zeta[zeta_index(xx, yy, m)].w = w;
-                            m_zeta[mzeta_index(xx, yy)]++;
-                        }
+                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                                 w - fabs(delta - ix1) * w);
+                        xx = x + ix2;
+                        yy = y + ycen_offset[x] - ycen_offset[xx];
+                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                                 fabs(delta - ix1) * w);
                     }
                 }
-                else /* CASE B: Subpixel iy is fully inside detector row y */
+                else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
                 {
-                    if (ix1 < ix2) /* Subpixel iy shifts to the right from column x      */
-                    {
-                        if (x + ix1 >= 0 && x + ix2 < ncols)
-                        {
-                            xx = x + ix1; /* Bottom right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 1)].x = xx;
-                            xi[xi_index(x, iy, 1)].y = yy;
-                            xi[xi_index(x, iy, 1)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 1)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 1)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix2; /* Bottom left corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 0)].x = xx;
-                            xi[xi_index(x, iy, 0)].y = yy;
-                            xi[xi_index(x, iy, 0)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 0)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 0)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
-                    {
-                        if (x + ix2 >= 0 && x + ix1 < ncols)
-                        {
-                            xx = x + ix2; /* Bottom right corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 1)].x = xx;
-                            xi[xi_index(x, iy, 1)].y = yy;
-                            xi[xi_index(x, iy, 1)].w = fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 1)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 1)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                            xx = x + ix1; /* Bottom left corner of subpixel iy */
-                            yy = y + ycen_offset[x] - ycen_offset[xx];
-                            xi[xi_index(x, iy, 0)].x = xx;
-                            xi[xi_index(x, iy, 0)].y = yy;
-                            xi[xi_index(x, iy, 0)].w = w - fabs(delta - ix1) * w;
-                            if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && xi[xi_index(x, iy, 0)].w > 0)
-                            {
-                                m = m_zeta[mzeta_index(xx, yy)];
-                                zeta[zeta_index(xx, yy, m)].x = x;
-                                zeta[zeta_index(xx, yy, m)].iy = iy;
-                                zeta[zeta_index(xx, yy, m)].w = xi[xi_index(x, iy, 0)].w;
-                                m_zeta[mzeta_index(xx, yy)]++;
-                            }
-                        }
-                    }
-                    else /* Subpixel iy stays inside column x */
+                    if (x + ix2 >= 0 && x + ix1 < ncols)
                     {
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        xi[xi_index(x, iy, 0)].x = xx;
-                        xi[xi_index(x, iy, 0)].y = yy;
-                        xi[xi_index(x, iy, 0)].w = w;
-                        if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
-                        {
-                            m = m_zeta[mzeta_index(xx, yy)];
-                            zeta[zeta_index(xx, yy, m)].x = x;
-                            zeta[zeta_index(xx, yy, m)].iy = iy;
-                            zeta[zeta_index(xx, yy, m)].w = w;
-                            m_zeta[mzeta_index(xx, yy)]++;
-                        }
+                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                                 fabs(delta - ix1) * w);
+                        xx = x + ix1;
+                        yy = y + ycen_offset[x] - ycen_offset[xx];
+                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                                 w - fabs(delta - ix1) * w);
                     }
+                }
+                else /* Subpixel iy stays inside column x */
+                {
+                    xx = x + ix1;
+                    yy = y + ycen_offset[x] - ycen_offset[xx];
+                    zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy, w);
                 }
             }
         }
@@ -972,7 +716,6 @@ int slitdec(        int ncols,
     int *zk;
 
     // For the geometry
-    xi_ref *xi;
     zeta_ref *zeta;
     int *m_zeta;
 
@@ -1046,7 +789,6 @@ int slitdec(        int ncols,
     p_bj = malloc(MAX_PBJ * sizeof(double));
     zw = malloc(MAX_ZETA_Z * sizeof(double));
     zk = malloc(MAX_ZETA_Z * sizeof(int));
-    xi = malloc(MAX_XI * sizeof(xi_ref));
     zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
     m_zeta = malloc(MAX_MZETA * sizeof(int));
     ycen_offset = malloc(ncols * sizeof(int));
@@ -1060,7 +802,7 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
-    xi_zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, xi, zeta, m_zeta);
+    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta);
 
     /* Loop through sL , sP reconstruction until convergence is reached */
     iter = 0;
@@ -1077,11 +819,10 @@ int slitdec(        int ncols,
         /* Fill in SLE arrays for slit function.
            Both SLE matrices are sums over detector pixels of all pairs of
            subpixels contributing to that pixel, i.e. pairs of entries in the
-           pixel's zeta list (each active xi entry corresponds to exactly one
-           zeta entry). Iterating pixel-centrically reads zeta sequentially,
-           skips masked pixels entirely and never touches the much larger xi
-           tensor. Accumulation order differs from the historic xi-centric
-           loop only at the rounding level. */
+           pixel's zeta list. Iterating pixel-centrically reads zeta
+           sequentially and skips masked pixels entirely. Accumulation order
+           differs from the historic xi-centric loop only at the rounding
+           level. */
         for (xx = 0; xx < ncols; xx++)
         {
             for (yy = 0; yy < nrows; yy++)
@@ -1444,7 +1185,6 @@ int slitdec(        int ncols,
     free(zw);
     free(zk);
 
-    free(xi);
     free(zeta);
     free(m_zeta);
 
@@ -1454,38 +1194,5 @@ int slitdec(        int ncols,
     info[3] = iter;
     info[4] = delta_x;
 
-    return 0;
-}
-
-int create_spectral_model(int ncols, int nrows, int osample, xi_ref* xi, double* spec, double* slitfunc, double* img){
-    int ny, pix_x, pix_y, x, iy, m;
-    double pix_w;
-
-    ny = (nrows + 1) * osample + 1;
-
-    for (x = 0; x < ncols; x++)
-    {
-        for (iy = 0; iy < nrows+1; iy++)
-        {
-            img[im_index(x, iy)] = 0;
-        }
-
-    }
-
-    for (x = 0; x < ncols; x++)
-    {
-        for (iy = 0; iy < ny; iy++)
-        {
-            for (m = 0; m < 4; m++)
-            {
-                pix_x = xi[xi_index(x, iy, m)].x;
-                pix_y = xi[xi_index(x, iy, m)].y;
-                pix_w = xi[xi_index(x, iy, m)].w;
-                if ((pix_x != -1) && (pix_y != -1) && (pix_w != 0)){
-                    img[im_index(pix_x, pix_y)] += pix_w * spec[x] * slitfunc[iy];
-                }
-            }
-        }
-    }
     return 0;
 }

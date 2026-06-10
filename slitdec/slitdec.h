@@ -1,13 +1,6 @@
 typedef struct
 {
     int x;
-    int y;    /* Coordinates of target pixel x,y  */
-    double w; /* Contribution weight <= 1/osample */
-} xi_ref;
-
-typedef struct
-{
-    int x;
     int iy;   /* Contributing subpixel  x,iy      */
     double w; /* Contribution weight <= 1/osample */
 } zeta_ref;
@@ -31,7 +24,7 @@ int slitdec(        int ncols,
                     double *unc,
                     double *info);
 
-int xi_zeta_tensors(
+int zeta_tensors(
     int ncols,
     int nrows,
     int ny,
@@ -41,16 +34,5 @@ int xi_zeta_tensors(
     int osample,
     double *slitcurve,
     double *slitdeltas,
-    xi_ref *xi,
     zeta_ref *zeta,
-    int *m_zeta)
-;
-
-int create_spectral_model(
-    int ncols,
-    int nrows,
-    int osample,
-    xi_ref* xi,
-    double* spec,
-    double* slitfunc,
-    double* img);
+    int *m_zeta);
