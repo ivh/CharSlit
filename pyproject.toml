@@ -34,3 +34,4 @@ cmake.define = {}
 # Run them explicitly with: pytest -m save_output
 addopts = "-m 'not save_output'"
 testpaths = ["tests"]
+pythonpath = ["scripts"]

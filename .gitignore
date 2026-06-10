@@ -1,6 +1,7 @@
 #manually added
 goodplots/
 plots/
+scratch/
 *.fits
 *.npz
 *.png
@@ -59,3 +60,4 @@ external
 
 # committed regression-test golden references (override *.npz ignore above)
 !tests/golden/*.npz
+.claude

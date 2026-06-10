@@ -77,7 +77,8 @@ def wing_fluxes(x, y, x0):
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = "scratch"
+    os.makedirs(here, exist_ok=True)
     d = np.load(os.path.join(here, "experiment_synthetic_lsf_wide_ssweep.npz"))
     u_grid = d["u_grid"]; lsf = d["lsf"]; line_x0 = float(d["line_x0"])
 

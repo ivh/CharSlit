@@ -370,7 +370,8 @@ def main():
     ax.legend(fontsize=8)
 
     fig.tight_layout()
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = "scratch"
+    os.makedirs(here, exist_ok=True)
     out = os.path.join(here, f"experiment_synthetic_lsf{args.tag}.png")
     fig.savefig(out, dpi=120)
     print(f"\nSaved {out}")

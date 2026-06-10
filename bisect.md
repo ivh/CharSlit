@@ -2,7 +2,7 @@
 
 A short introduction for someone who has not used line bisectors before, in
 the specific context of how we use them in this repo
-(`analyse_wide_bisector.py`, the wide-LSF experiment, RV-style shape
+(`scripts/analyse_wide_bisector.py`, the wide-LSF experiment, RV-style shape
 diagnostics).
 
 ## What it is
@@ -73,13 +73,13 @@ m/s level.
 
 ## How we use it in this repo
 
-In `experiment_synthetic_lsf.py` we generate a known asymmetric LSF (a
+In `scripts/experiment_synthetic_lsf.py` we generate a known asymmetric LSF (a
 0.8 px top-hat core convolved with a 0.25 px Gaussian, plus a 15% blue
 exponential wing) and try to recover it with `slitdec` at different
 `osamp_spec` values. The recovered fine spectrum near the single emission
 line *is* the recovered LSF, in detector-pixel units.
 
-`analyse_wide_bisector.py`:
+`scripts/analyse_wide_bisector.py`:
 
 1. Computes the bisector of the **truth** LSF on its dense 1/50-px grid.
 2. Computes the bisector of each **recovered** LSF (one per `osamp_spec`
