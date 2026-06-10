@@ -18,6 +18,14 @@ import warnings
 from plotting import overlay_slitcurve_trajectories, plot_slitdec_results
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        help="Regenerate golden reference files for regression tests",
+    )
+
+
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line(
