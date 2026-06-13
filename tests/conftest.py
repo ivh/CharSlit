@@ -254,13 +254,18 @@ def real_data_files(request):
     # Fallback to slitdeltas_{basename}.npz (legacy format)
     slitdeltas_path = fits_path.parent / f"slitdeltas_{fits_path.stem}.npz"
 
-    # Load FITS image
+    # Load FITS image. The image is usually in the primary HDU, but some real
+    # data (e.g. CRIRES) keep a metadata-only primary and store frames in
+    # extensions, so fall back to the first 2D HDU we find.
     with fits.open(fits_path) as hdul:
-        im = hdul[0].data.astype(np.float64)
+        data = next((h.data for h in hdul
+                     if h.data is not None and h.data.ndim == 2), None)
 
-    # Skip non-2D data (e.g., ycen arrays)
-    if im.ndim != 2:
-        pytest.skip(f"Skipping {fits_path.name}: not a 2D image (shape={im.shape})")
+    # Skip files with no usable 2D image (e.g. binary-table-only files)
+    if data is None:
+        pytest.skip(f"Skipping {fits_path.name}: no 2D image HDU")
+
+    im = data.astype(np.float64)
 
     nrows, ncols = im.shape
     osample = 6  # Default oversampling
