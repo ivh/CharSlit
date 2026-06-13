@@ -5,6 +5,16 @@ typedef struct
     double w; /* Contribution weight <= 1/osample */
 } zeta_ref;
 
+/* Key ranges of one pixel's zeta list, maintained by the zeta build.
+   The SLE fill loops merge the list by subpixel index iy (sL system) or
+   source column x (sP system) into a small dense window [min, max]
+   instead of searching a list of unique keys. */
+typedef struct
+{
+    int min_iy, max_iy;
+    int min_x, max_x;
+} zeta_rng;
+
 int slitdec(        int ncols,
                     int nrows,
                     double *im,
@@ -35,4 +45,5 @@ int zeta_tensors(
     double *slitcurve,
     double *slitdeltas,
     zeta_ref *zeta,
-    int *m_zeta);
+    int *m_zeta,
+    zeta_rng *z_rng);

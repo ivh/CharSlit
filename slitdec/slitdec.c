@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <math.h>
 #include "slitdec.h"
 
@@ -419,16 +420,22 @@ double quick_select_percentile(double arr[], unsigned int n, double percentile)
     }
 }
 
-static void zeta_add(zeta_ref *zeta, int *m_zeta, int ncols, int nrows, int osample,
+static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
+                     int ncols, int nrows, int osample,
                      int x, int iy, int xx, int yy, double w)
 {
     if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
     {
         const int m = m_zeta[mzeta_index(xx, yy)];
+        zeta_rng *zr = &z_rng[mzeta_index(xx, yy)];
         zeta[zeta_index(xx, yy, m)].x = x;
         zeta[zeta_index(xx, yy, m)].iy = iy;
         zeta[zeta_index(xx, yy, m)].w = w;
         m_zeta[mzeta_index(xx, yy)]++;
+        if (iy < zr->min_iy) zr->min_iy = iy;
+        if (iy > zr->max_iy) zr->max_iy = iy;
+        if (x < zr->min_x) zr->min_x = x;
+        if (x > zr->max_x) zr->max_x = x;
     }
 }
 
@@ -443,7 +450,8 @@ int zeta_tensors(
     double *slitcurve,
     double *slitdeltas,
     zeta_ref *zeta,
-    int *m_zeta)
+    int *m_zeta,
+    zeta_rng *z_rng)
 {
     /*
     Create the zeta tensor, which describes the contribution of each subpixel
@@ -495,10 +503,18 @@ int zeta_tensors(
     step = 1.e0 / osample;
 
     /* Clean zeta counts. The zeta entries themselves need no initialization:
-       only the first m_zeta[x, y] entries of each list are ever read. */
+       only the first m_zeta[x, y] entries of each list are ever read.
+       Same for the key ranges: only read where m_zeta[x, y] > 0. */
     for (x = 0; x < ncols; x++)
         for (y = 0; y < nrows; y++)
+        {
+            zeta_rng *zr = &z_rng[mzeta_index(x, y)];
             m_zeta[mzeta_index(x, y)] = 0;
+            zr->min_iy = INT_MAX;
+            zr->max_iy = INT_MIN;
+            zr->min_x = INT_MAX;
+            zr->max_x = INT_MIN;
+        }
 
     /*
     Construct the zeta tensor. It contains pixel references and contribution
@@ -600,11 +616,11 @@ int zeta_tensors(
                     {
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
                                  w - fabs(delta - ix1) * w);
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
                                  fabs(delta - ix1) * w);
                     }
                 }
@@ -614,11 +630,11 @@ int zeta_tensors(
                     {
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
                                  fabs(delta - ix1) * w);
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
                                  w - fabs(delta - ix1) * w);
                     }
                 }
@@ -626,7 +642,7 @@ int zeta_tensors(
                 {
                     xx = x + ix1;
                     yy = y + ycen_offset[x] - ycen_offset[xx];
-                    zeta_add(zeta, m_zeta, ncols, nrows, osample, x, iy, xx, yy, w);
+                    zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy, w);
                 }
             }
         }
@@ -718,6 +734,7 @@ int slitdec(        int ncols,
     // For the geometry
     zeta_ref *zeta;
     int *m_zeta;
+    zeta_rng *z_rng;
 
     // The Optimization results
     double success, status;
@@ -787,10 +804,15 @@ int slitdec(        int ncols,
     p_Aij = malloc(MAX_PAIJ * sizeof(double));
     l_bj = malloc(MAX_LBJ * sizeof(double));
     p_bj = malloc(MAX_PBJ * sizeof(double));
-    zw = malloc(MAX_ZETA_Z * sizeof(double));
-    zk = malloc(MAX_ZETA_Z * sizeof(int));
+    /* Scratch buffers for per-pixel merged zeta weights: large enough for
+       both the slit-function window (2*osample+1 <= MAX_ZETA_Z) and the
+       spectrum window (2*delta_x+1 <= nx) */
+    int zbuf = max(MAX_ZETA_Z, nx);
+    zw = malloc(zbuf * sizeof(double));
+    zk = malloc(zbuf * sizeof(int));
     zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
     m_zeta = malloc(MAX_MZETA * sizeof(int));
+    z_rng = malloc(MAX_MZETA * sizeof(zeta_rng));
     ycen_offset = malloc(ncols * sizeof(int));
     sP_old = malloc(ncols * sizeof(double));
     sP_diff = malloc(ncols * sizeof(double));
@@ -802,7 +824,7 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
-    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta);
+    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
 
     /* Loop through sL , sP reconstruction until convergence is reached */
     iter = 0;
@@ -833,7 +855,38 @@ int slitdec(        int ncols,
                 const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
                 const double imv = im[im_index(xx, yy)];
                 /* Merge entries sharing the same subpixel index iy: only the
-                   summed weight enters both the matrix and the RHS */
+                   summed weight enters both the matrix and the RHS. The iy of
+                   one pixel span at most 2*osample+1 indices (the band width
+                   assumed by the matrix), so merge into a dense window
+                   zw[iy - k0] instead of searching a list of unique keys. */
+                const zeta_rng *zr = &z_rng[mzeta_index(xx, yy)];
+                const int k0 = zr->min_iy;
+                const int rng = zr->max_iy - k0;
+                if (rng <= 2 * osample)
+                {
+                    for (n = 0; n <= rng; n++)
+                        zw[n] = 0.e0;
+                    for (m = 0; m < mz; m++)
+                        zw[zrow[m].iy - k0] += sP[sp_index(zrow[m].x)] * zrow[m].w;
+                    /* The matrix is symmetric: accumulate each unordered pair
+                       once into the upper bands (mirrored below after the
+                       fill). Walking the window row-wise makes the inner loop
+                       contiguous in both operands; window entries between
+                       actual keys are zero and add exactly nothing. */
+                    for (m = 0; m <= rng; m++)
+                    {
+                        const double um = zw[m];
+                        const double *restrict uv = zw + m;
+                        double *restrict arow = &l_Aij[laij_index(k0 + m, 2 * osample)];
+                        const int dmax = rng - m;
+                        for (n = 0; n <= dmax; n++)
+                            arow[n] += um * uv[n];
+                        l_bj[lbj_index(k0 + m)] += imv * um;
+                    }
+                    continue;
+                }
+                /* Over-wide list (extreme geometry): merge by searching
+                   unique keys, as before */
                 int nk = 0;
                 for (m = 0; m < mz; m++)
                 {
@@ -853,8 +906,6 @@ int slitdec(        int ncols,
                         zw[nk++] = v;
                     }
                 }
-                /* The matrix is symmetric: accumulate each unordered pair
-                   once into the upper bands; mirrored below after the fill */
                 for (m = 0; m < nk; m++)
                 {
                     iy = zk[m];
@@ -950,7 +1001,33 @@ int slitdec(        int ncols,
                 const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
                 const double imv = im[im_index(xx, yy)];
                 /* Merge entries sharing the same source column x; with small
-                   curvature this collapses the list to just a few entries */
+                   curvature this collapses the list to just a few entries.
+                   Sources span at most 2*delta_x+1 columns (the band width of
+                   the matrix), so merge into a dense window zw[x - k0]. */
+                const zeta_rng *zr = &z_rng[mzeta_index(xx, yy)];
+                const int k0 = zr->min_x;
+                const int rng = zr->max_x - k0;
+                if (rng <= 2 * delta_x)
+                {
+                    for (n = 0; n <= rng; n++)
+                        zw[n] = 0.e0;
+                    for (m = 0; m < mz; m++)
+                        zw[zrow[m].x - k0] += sL[sl_index(zrow[m].iy)] * zrow[m].w;
+                    /* Symmetric matrix: upper bands only, mirrored after the
+                       fill. Window entries between keys are zero. */
+                    for (m = 0; m <= rng; m++)
+                    {
+                        const double um = zw[m];
+                        const double *restrict uv = zw + m;
+                        double *restrict arow = &p_Aij[paij_index(k0 + m, 2 * delta_x)];
+                        const int dmax = rng - m;
+                        for (n = 0; n <= dmax; n++)
+                            arow[n] += um * uv[n];
+                        p_bj[pbj_index(k0 + m)] += imv * um;
+                    }
+                    continue;
+                }
+                /* Over-wide list: merge by searching unique keys */
                 int nk = 0;
                 for (m = 0; m < mz; m++)
                 {
@@ -970,7 +1047,6 @@ int slitdec(        int ncols,
                         zw[nk++] = v;
                     }
                 }
-                /* Symmetric matrix: upper bands only, mirrored after the fill */
                 for (m = 0; m < nk; m++)
                 {
                     x = zk[m];
@@ -1051,23 +1127,24 @@ int slitdec(        int ncols,
             sP_diff[x] = sP[sp_index(x)];  /* reuse buffer for median calc */
         sP_med = fabs(quick_select_median(sP_diff, ncols));
 
-        /* Compute the model */
-        for (x = 0; x < MAX_IM; x++)
+        /* Compute the model.
+           x is the outer loop so that the zeta tensor, by far the largest
+           array, is read sequentially instead of with a large stride */
+        for (x = 0; x < ncols; x++)
         {
-            model[x] = 0.;
-        }
-
-        for (y = 0; y < nrows; y++)
-        {
-            for (x = 0; x < ncols; x++)
+            for (y = 0; y < nrows; y++)
             {
-                for (m = 0; m < m_zeta[mzeta_index(x, y)]; m++)
+                const zeta_ref *zrow = &zeta[zeta_index(x, y, 0)];
+                const int mz = m_zeta[mzeta_index(x, y)];
+                double acc = 0.;
+                for (m = 0; m < mz; m++)
                 {
-                    xx = zeta[zeta_index(x, y, m)].x;
-                    iy = zeta[zeta_index(x, y, m)].iy;
-                    ww = zeta[zeta_index(x, y, m)].w;
-                    model[im_index(x, y)] += sP[xx] * sL[iy] * ww;
+                    xx = zrow[m].x;
+                    iy = zrow[m].iy;
+                    ww = zrow[m].w;
+                    acc += sP[xx] * sL[iy] * ww;
                 }
+                model[im_index(x, y)] = acc;
             }
         }
 
@@ -1187,6 +1264,7 @@ int slitdec(        int ncols,
 
     free(zeta);
     free(m_zeta);
+    free(z_rng);
 
     info[0] = success;
     info[1] = sP_change;
