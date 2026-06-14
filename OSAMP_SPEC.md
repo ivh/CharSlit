@@ -137,6 +137,37 @@ Caller is responsible for picking a value appropriate to their
 **3. Band-solver cost grows as `ncols_fine * nx² ≈ osamp_spec³`.**
 Acceptable for `osamp_spec ≤ 4`. Memory grows as `osamp_spec²`.
 
+## Design decisions
+
+- **`lambda_fringe` is the only fringe regularizer (kind=0).** An earlier WIP
+  frequency-weighted variant (`kind=1`, behind a `CHARSLIT_LAMBDA_FRINGE_KIND`
+  env flag) was dropped: at s=2 the within-block non-DC subspace is 1-D (pure
+  Nyquist) so the two variants are scalar multiples (identical), and at s=3 it
+  is 2-D but still dominated by `k=2π/3`, so kind=1 buys only marginal
+  discrimination. Real room for frequency weighting needs s>=4; sweeps showed
+  no meaningful gain at s<=3, so the flag and the variant were removed.
+- **Mechanism validated** on synthetic and real data — see
+  `OSAMP_EXPERIMENTS.md`. Headline: super-resolution is real only when the line
+  is genuinely under-sampled *and* the slit carries enough tilt-phase
+  diversity; on well-sampled or no-tilt data the fine spectrum collapses to the
+  block-mean staircase. `lambda_sP` is far more aggressive on the fine grid
+  than on the coarse one (even `1e-8` erodes the sharpest sub-pixel peaks), so
+  the practical recipe is small `lambda_sP` and small-or-zero `lambda_fringe`.
+
+## PyReduce integration
+
+The super-resolution experiments on real survey data are driven from PyReduce
+(separate repo, `/Users/tom/PyReduce`) via env-var overrides that live there,
+not here: `PYREDUCE_CHARSLIT_OSAMP_SPEC`, `PYREDUCE_CHARSLIT_LAMBDA_FRINGE`,
+`PYREDUCE_CHARSLIT_LAMBDA_SP`, `PYREDUCE_CHARSLIT_DUMP_DIR`.
+
+**Gotcha**: PyReduce's `.venv` installs `charslit` from git, not this dev tree.
+After editing C here, reinstall into PyReduce:
+
+```
+cd /Users/tom/PyReduce && uv pip install -e /Users/tom/CharSlit.git --force-reinstall --no-deps
+```
+
 ## Files touched
 
 - `slitdec/slitdec.c` — `MAX_ZETA_Z`/`MAX_SP`/`MAX_PAIJ_X`/`MAX_PBJ`
@@ -155,9 +186,25 @@ Acceptable for `osamp_spec ≤ 4`. Memory grows as `osamp_spec²`.
 No changes to `make_curvedelta.py`, `plotting.py`, or the slit-function
 (`sL`) path.
 
-## Pending
+## Deferred work
 
-- Add synthetic super-resolution test (tilted slit, narrow line,
-  `osamp_spec=3`) — should show a non-trivial departure from
-  staircase at moderate `lambda_fringe`, confirming the regulariser
-  preserves genuine super-resolution content when it exists
+**Do not start on these until explicitly asked** — a parking lot so the work
+record is captured without committing to it.
+
+- **Validate `osamp_spec` at s>3 before pinning regression tests beyond s=1.**
+  The wide-LSF s-sweep showed s=4-5 beating s=3 on BIS bias with s=6 starting
+  to overshoot (`OSAMP_EXPERIMENTS.md`, synthetic findings 6 and 10-12), but
+  that is one realisation. Before pinning s=2..5 to a golden, establish:
+  - **Geometry robustness** — repeat the sweep at different total tilt sweeps
+    (1, 2, 5 px), different `ncols`, different line positions; the optimal s
+    must be stable, else the s=4-5 gain was a one-realisation accident.
+  - **Multi-seed scatter** — 20-50 noise seeds, report mean±std of BIS bias
+    per s, to tell bias from a single bad draw and to compare s=3/4/5 properly.
+  - **Mechanism for the s=6 over-correction** — confirm it is the
+    forward-model fringe-mode null saturating (caveat 1 above), not the
+    boundary zeroing (`first/last delta_x*osamp_spec` fine bins) eating a
+    larger fraction of the recoverable spectrum (vary the boundary width and
+    watch whether s=6 tracks it).
+- **Synthetic super-resolution regression test** (tilted slit, narrow line,
+  `osamp_spec=3`) confirming the regularizer preserves genuine content when it
+  exists; `scripts/compare_osamp.py` already demonstrates this informally.
