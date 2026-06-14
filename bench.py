@@ -1,4 +1,4 @@
-"""Benchmark slitdec on the real data files. Usage: uv run python bench.py [nrepeat]
+"""Benchmark slitdec on the real data files. Usage: uv run python bench.py [nrepeat] [--osamp_spec S]
 
 This times ONLY the charslit.slitdec C call (each case is loaded once, then the
 call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
@@ -35,7 +35,7 @@ to the C code:
      fixture prep, and the rtol-1e-10 npz comparison, which do not speed up.
 """
 
-import sys
+import argparse
 import time
 from pathlib import Path
 
@@ -44,7 +44,14 @@ from astropy.io import fits
 
 import charslit
 
-NREPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+parser = argparse.ArgumentParser(description="Benchmark slitdec on the real data files.")
+parser.add_argument("nrepeat", nargs="?", type=int, default=3,
+                    help="best-of-N repeats per case (default: 3)")
+parser.add_argument("--osamp_spec", type=int, default=1,
+                    help="dispersion oversampling factor (default: 1)")
+_args = parser.parse_args()
+NREPEAT = _args.nrepeat
+OSAMP_SPEC = _args.osamp_spec
 
 
 def load_case(fits_path):
@@ -108,7 +115,8 @@ if __name__ == "__main__":
             result = charslit.slitdec(
                 case["im"], case["pix_unc"], case["mask"], case["ycen"],
                 case["slitcurve"], case["slitdeltas"],
-                osample=6, lambda_sP=case["lambda_sP"], lambda_sL=case["lambda_sL"],
+                osample=6, osamp_spec=OSAMP_SPEC,
+                lambda_sP=case["lambda_sP"], lambda_sL=case["lambda_sL"],
             )
             times.append(time.perf_counter() - t0)
         best = min(times)
@@ -116,4 +124,4 @@ if __name__ == "__main__":
         niter = int(result["info"][3])
         print(f"{f.name:25s} {case['im'].shape!s:12s} best={best*1000:9.2f} ms  "
               f"iters={niter:3d}  per-iter={best*1000/max(niter,1):8.2f} ms")
-    print(f"{'TOTAL (best-of runs)':25s} {'':12s} {total*1000:14.2f} ms")
+    print(f"{'TOTAL (best-of runs)':25s} {'':12s} {total*1000:14.2f} ms  (osamp_spec={OSAMP_SPEC})")
