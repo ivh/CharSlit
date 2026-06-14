@@ -16,14 +16,22 @@ nb::dict slitdec_wrapper(
     nb::ndarray<double, nb::ndim<2>, nb::c_contig, nb::device::cpu> slitcurve,
     nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu> slitdeltas,
     int osample,
+    int osamp_spec,
     double lambda_sP,
     double lambda_sL,
+    double lambda_fringe,
     int maxiter,
     double kappa
 ) {
     // Get dimensions from input image
     int nrows = im.shape(0);
     int ncols = im.shape(1);
+
+    if (osamp_spec < 1) {
+        throw std::runtime_error("osamp_spec must be >= 1");
+    }
+    // Spectrum is stored on the fine dispersion grid of length ncols * osamp_spec
+    int ncols_fine = ncols * osamp_spec;
 
     // Validate input dimensions
     if (pix_unc.shape(0) != nrows || pix_unc.shape(1) != ncols) {
@@ -88,21 +96,22 @@ nb::dict slitdec_wrapper(
         throw std::runtime_error("slitdeltas must have length nrows or ny = osample * (nrows + 1) + 1");
     }
 
-    // Allocate output arrays
-    size_t sP_shape[1] = {static_cast<size_t>(ncols)};
+    // Allocate output arrays. The spectrum and its uncertainty live on the fine
+    // dispersion grid (length ncols_fine); the model stays on the detector grid.
+    size_t sP_shape[1] = {static_cast<size_t>(ncols_fine)};
     size_t sL_shape[1] = {static_cast<size_t>(ny)};
     size_t model_shape[2] = {static_cast<size_t>(nrows), static_cast<size_t>(ncols)};
-    size_t unc_shape[1] = {static_cast<size_t>(ncols)};
+    size_t unc_shape[1] = {static_cast<size_t>(ncols_fine)};
     size_t info_shape[1] = {5};
 
-    double* sP = new double[ncols];
+    double* sP = new double[ncols_fine];
     double* sL = new double[ny];
     double* model = new double[nrows * ncols];
-    double* unc = new double[ncols];
+    double* unc = new double[ncols_fine];
     double* info = new double[5];
 
     // Initialize sP and sL with ones (starting guess)
-    for (int i = 0; i < ncols; i++) {
+    for (int i = 0; i < ncols_fine; i++) {
         sP[i] = 1.0;
     }
     for (int i = 0; i < ny; i++) {
@@ -147,8 +156,10 @@ nb::dict slitdec_wrapper(
         slitcurve_padded,
         slitdeltas_interp,
         osample,
+        osamp_spec,
         lambda_sP,
         lambda_sL,
+        lambda_fringe,
         maxiter,
         kappa,
         sP,
@@ -211,8 +222,10 @@ NB_MODULE(charslit, m) {
           nb::arg("slitcurve"),
           nb::arg("slitdeltas"),
           nb::arg("osample") = 6,
+          nb::arg("osamp_spec") = 1,
           nb::arg("lambda_sP") = 0.0,
           nb::arg("lambda_sL") = 1.0,
+          nb::arg("lambda_fringe") = 0.0,
           nb::arg("maxiter") = 20,
           nb::arg("kappa") = 10.0,
           "Slit decomposition with slit characterization\n\n"
@@ -232,11 +245,18 @@ NB_MODULE(charslit, m) {
           "    Slit deltas. Can be length nrows (will be linearly interpolated to ny)\n"
           "    or length ny = osample * (nrows + 1) + 1 (used directly)\n"
           "osample : int, optional\n"
-          "    Subpixel oversampling factor (default: 6)\n"
+          "    Subpixel oversampling factor across the slit (default: 6)\n"
+          "osamp_spec : int, optional\n"
+          "    Dispersion-direction oversampling factor (default: 1). The spectrum\n"
+          "    and its uncertainty are returned on a fine grid of length\n"
+          "    ncols * osamp_spec. osamp_spec=1 reproduces the unoversampled result.\n"
           "lambda_sP : float, optional\n"
           "    Smoothing parameter for spectrum (default: 0.0)\n"
           "lambda_sL : float, optional\n"
-          "    Smoothing parameter for slit function (default: 0.1)\n"
+          "    Smoothing parameter for slit function (default: 1.0)\n"
+          "lambda_fringe : float, optional\n"
+          "    Selective regularization of the osamp-period fringe mode, active only\n"
+          "    when osamp_spec > 1 (default: 0.0)\n"
           "maxiter : int, optional\n"
           "    Maximum number of iterations (default: 20)\n"
           "kappa : float, optional\n"
@@ -245,14 +265,14 @@ NB_MODULE(charslit, m) {
           "Returns\n"
           "-------\n"
           "dict with keys:\n"
-          "    spectrum : ndarray (ncols,)\n"
-          "        Extracted spectrum\n"
+          "    spectrum : ndarray (ncols * osamp_spec,)\n"
+          "        Extracted spectrum on the fine dispersion grid\n"
           "    slitfunction : ndarray (ny,)\n"
           "        Slit illumination function\n"
           "    model : ndarray (nrows, ncols)\n"
           "        Model reconstructed from spectrum and slit function\n"
-          "    uncertainty : ndarray (ncols,)\n"
-          "        Spectrum uncertainties\n"
+          "    uncertainty : ndarray (ncols * osamp_spec,)\n"
+          "        Spectrum uncertainties on the fine dispersion grid\n"
           "    info : ndarray (5,)\n"
           "        Status information [success, cost, status, iter, delta_x]\n"
           "    mask : ndarray (nrows, ncols), uint8\n"

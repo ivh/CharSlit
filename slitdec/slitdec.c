@@ -25,6 +25,8 @@ int _nrows = 0;
 int _ny = 0;
 int _nx = 0;
 int _osample = 0;
+int _osamp_spec = 0;
+int _ncols_fine = 0;
 int _n = 0;
 int _nd = 0;
 #else
@@ -33,6 +35,8 @@ int _nd = 0;
 #define _ny ny
 #define _nx nx
 #define _osample osample
+#define _osamp_spec osamp_spec
+#define _ncols_fine ncols_fine
 #define _n n
 #define _nd nd
 #endif
@@ -40,7 +44,11 @@ int _nd = 0;
 // Define the sizes of each array
 #define MAX_ZETA_X (_ncols)
 #define MAX_ZETA_Y (_nrows)
-#define MAX_ZETA_Z (3 * ((_osample) + 1))
+/* Entries per detector pixel. At osamp_spec == 1 this must stay 3*(osample+1)
+   (master's value) so the zeta stride/footprint — and thus s=1 speed — are
+   unchanged. For s > 1 each source column splits across the fine grid, so use
+   the wider, proven-safe 3*(osample+1)*(osamp_spec+1). */
+#define MAX_ZETA_Z (3 * ((_osample) + 1) * ((_osamp_spec) > 1 ? ((_osamp_spec) + 1) : 1))
 #define MAX_ZETA (MAX_ZETA_X * MAX_ZETA_Y * MAX_ZETA_Z)
 #define MAX_MZETA ((_ncols) * (_nrows))
 #define MAX_CRV_X (_ncols)
@@ -48,16 +56,16 @@ int _nd = 0;
 #define MAX_CRV (MAX_CRV_X * MAX_CRV_Y)
 #define MAX_A ((_n) * (_nd))
 #define MAX_R (_n)
-#define MAX_SP (_ncols)
+#define MAX_SP (_ncols_fine)
 #define MAX_SL (_ny)
 #define MAX_LAIJ_X (_ny)
 #define MAX_LAIJ_Y (4 * (_osample) + 1)
 #define MAX_LAIJ (MAX_LAIJ_X * MAX_LAIJ_Y)
-#define MAX_PAIJ_X (_ncols)
+#define MAX_PAIJ_X (_ncols_fine)
 #define MAX_PAIJ_Y (_nx)
 #define MAX_PAIJ (MAX_PAIJ_X * MAX_PAIJ_Y)
 #define MAX_LBJ (_ny)
-#define MAX_PBJ (_ncols)
+#define MAX_PBJ (_ncols_fine)
 #define MAX_IM ((_ncols) * (_nrows))
 
 // If we want to check the index use functions to represent the index
@@ -421,7 +429,7 @@ double quick_select_percentile(double arr[], unsigned int n, double percentile)
 }
 
 static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
-                     int ncols, int nrows, int osample,
+                     int ncols, int nrows, int osample, int osamp_spec,
                      int x, int iy, int xx, int yy, double w)
 {
     if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
@@ -447,6 +455,7 @@ int zeta_tensors(
     int *ycen_offset,
     int y_lower_lim,
     int osample,
+    int osamp_spec,
     double *slitcurve,
     double *slitdeltas,
     zeta_ref *zeta,
@@ -497,10 +506,13 @@ int zeta_tensors(
     code : int
         0 on success, -1 on failure
     */
-    int x, xx, y, yy, ix1, ix2, iy, iy1, iy2;
+    int x, x_fine, xx, y, yy, ix1, ix2, iy, iy1, iy2;
+    int ncols_fine = ncols * osamp_spec;
     double step, delta, dy, w, d1, d2;
+    double x_off_frac, frac_fine;
 
     step = 1.e0 / osample;
+    frac_fine = 1.e0 / osamp_spec;
 
     /* Clean zeta counts. The zeta entries themselves need no initialization:
        only the first m_zeta[x, y] entries of each list are ever read.
@@ -522,8 +534,16 @@ int zeta_tensors(
     Note that zeta is used in the equations for sL, sP and for the model but it
     does not involve the data, only the geometry. Thus it can be pre-computed once.
     */
-    for (x = 0; x < ncols; x++)
+    for (x_fine = 0; x_fine < ncols_fine; x_fine++)
     {
+        /* The spectrum lives on a fine grid of length ncols_fine = ncols *
+           osamp_spec. x is the detector column the fine bin x_fine belongs to,
+           and x_off_frac in [0,1) is where the fine bin starts inside that
+           column. The slit geometry (ycen, slitcurve, ycen_offset) is indexed
+           by the detector column x. */
+        x = x_fine / osamp_spec;
+        x_off_frac = (double)(x_fine - x * osamp_spec) / (double)osamp_spec;
+
         /*
         I promised to reconsider the initial offset. Here it is. For the original layout
         (no column shifts and discontinuities in ycen) there is pixel y that contains the
@@ -607,42 +627,93 @@ int zeta_tensors(
                         t * (slitcurve[curve_index(x, 4)] +
                         t *  slitcurve[curve_index(x, 5)]))))
                         + slitdeltas[iy];
-                ix1 = delta;
-                ix2 = ix1 + signum(delta);
+                if (osamp_spec == 1)
+                {
+                    /* Original (coarse) deposit, kept verbatim so the s == 1
+                       result is bit-identical to the pre-osamp_spec code: the
+                       per-entry float values and the zeta append order must not
+                       change. Here x_fine == x, so the stored bin index is x. */
+                    ix1 = delta;
+                    ix2 = ix1 + signum(delta);
 
-                if (ix1 < ix2) /* Subpixel iy shifts to the right from column x */
-                {
-                    if (x + ix1 >= 0 && x + ix2 < ncols)
+                    if (ix1 < ix2) /* Subpixel iy shifts to the right from column x */
+                    {
+                        if (x + ix1 >= 0 && x + ix2 < ncols)
+                        {
+                            xx = x + ix1;
+                            yy = y + ycen_offset[x] - ycen_offset[xx];
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x, iy, xx, yy,
+                                     w - fabs(delta - ix1) * w);
+                            xx = x + ix2;
+                            yy = y + ycen_offset[x] - ycen_offset[xx];
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x, iy, xx, yy,
+                                     fabs(delta - ix1) * w);
+                        }
+                    }
+                    else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
+                    {
+                        if (x + ix2 >= 0 && x + ix1 < ncols)
+                        {
+                            xx = x + ix2;
+                            yy = y + ycen_offset[x] - ycen_offset[xx];
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x, iy, xx, yy,
+                                     fabs(delta - ix1) * w);
+                            xx = x + ix1;
+                            yy = y + ycen_offset[x] - ycen_offset[xx];
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x, iy, xx, yy,
+                                     w - fabs(delta - ix1) * w);
+                        }
+                    }
+                    else /* Subpixel iy stays inside column x */
                     {
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 w - fabs(delta - ix1) * w);
-                        xx = x + ix2;
-                        yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 fabs(delta - ix1) * w);
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x, iy, xx, yy, w);
                     }
                 }
-                else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
+                else
                 {
-                    if (x + ix2 >= 0 && x + ix1 < ncols)
+                    /* Fine-grid deposit. The fine bin x_fine occupies the
+                       horizontal interval [x_off_frac, x_off_frac + 1/s) within
+                       column x; the slit tilt delta shifts it to
+                       [pos_L, pos_L + 1/s). It straddles at most two detector
+                       columns, floor(pos_L) and floor(pos_L)+1, with overlap
+                       weights summing to 1/s. The stored bin index is x_fine. */
+                    double pos_L = x_off_frac + delta;
+                    int dx_left = (int)floor(pos_L);
+                    double frac_L = pos_L - (double)dx_left;
+                    int dx_right;
+                    double w_xL, w_xR;
+                    if (frac_L + frac_fine > 1.e0)
                     {
-                        xx = x + ix2;
-                        yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 fabs(delta - ix1) * w);
-                        xx = x + ix1;
-                        yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 w - fabs(delta - ix1) * w);
+                        dx_right = dx_left + 1;
+                        w_xL = 1.e0 - frac_L;
+                        w_xR = frac_L + frac_fine - 1.e0;
                     }
-                }
-                else /* Subpixel iy stays inside column x */
-                {
-                    xx = x + ix1;
-                    yy = y + ycen_offset[x] - ycen_offset[xx];
-                    zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy, w);
+                    else
+                    {
+                        dx_right = dx_left;
+                        w_xL = frac_fine;
+                        w_xR = 0.e0;
+                    }
+
+                    xx = x + dx_left;
+                    if (xx >= 0 && xx < ncols && w_xL > 0.e0)
+                    {
+                        yy = y + ycen_offset[x] - ycen_offset[xx];
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x_fine, iy, xx, yy,
+                                 w_xL * w);
+                    }
+                    if (dx_right != dx_left)
+                    {
+                        xx = x + dx_right;
+                        if (xx >= 0 && xx < ncols && w_xR > 0.e0)
+                        {
+                            yy = y + ycen_offset[x] - ycen_offset[xx];
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, osamp_spec, x_fine, iy, xx, yy,
+                                     w_xR * w);
+                        }
+                    }
                 }
             }
         }
@@ -659,8 +730,10 @@ int slitdec(        int ncols,
                     double *slitcurve,
                     double *slitdeltas,
                     int osample,
+                    int osamp_spec,
                     double lambda_sP,
                     double lambda_sL,
+                    double lambda_fringe,
                     int maxiter,
                     double kappa,
                     double *sP,
@@ -717,6 +790,7 @@ int slitdec(        int ncols,
         0 on success, -1 on failure (see also bandsol)
     */
     int x, xx, y, yy, iy, n, m, nx, ny;
+    int ncols_fine, delta_x_fine;
     double norm, dev, lambda, diag_tot, ww, tmp;
     double sP_change, sP_stop, sP_med;
     int iter, delta_x;
@@ -746,13 +820,17 @@ int slitdec(        int ncols,
 
     sP_change = INFINITY;
     ny = osample * (nrows + 1) + 1; /* The size of the sL array. Extra osample is because ycen can be between 0 and 1. */
+    ncols_fine = ncols * osamp_spec; /* Spectrum is stored on the fine dispersion grid */
 
 #if DEBUG
     _ncols = ncols;
     _nrows = nrows;
     _ny = ny;
     _osample = osample;
-    printf("ncols: %d, nrows: %d, ny: %d, osample: %d\n", _ncols, _nrows, _ny, _osample);
+    _osamp_spec = osamp_spec;
+    _ncols_fine = ncols_fine;
+    printf("ncols: %d, ncols_fine: %d, nrows: %d, ny: %d, osample: %d, osamp_spec: %d\n",
+           _ncols, _ncols_fine, _nrows, _ny, _osample, _osamp_spec);
 #endif
 
     // If we want to smooth the spectrum we need at least delta_x = 1
@@ -782,7 +860,14 @@ int slitdec(        int ncols,
         delta_x = max(delta_x, tmp);
     }
 
-    nx = 4 * delta_x + 1; /* Maximum horizontal shift in detector pixels due to slit image curvature         */
+    /* Full band width of the spectrum normal matrix on the fine grid. Two fine
+       bins can both land in the same detector column only if their indices
+       differ by less than osamp_spec*(2*delta_x+1), giving
+       nx = 4*delta_x*osamp_spec + 2*osamp_spec - 1. For osamp_spec == 1 this
+       reduces to 4*delta_x + 1, the original band width. delta_x_fine is the
+       band half-width (centre offset), equal to 2*delta_x when osamp_spec == 1. */
+    nx = 4 * delta_x * osamp_spec + 2 * osamp_spec - 1;
+    delta_x_fine = (nx - 1) / 2;
 
 #if DEBUG
     _nx = nx;
@@ -790,7 +875,7 @@ int slitdec(        int ncols,
 
     // The curvature is larger than the number of columns
     // Usually that means that the curvature is messed up
-    if (nx > ncols)
+    if (nx > ncols_fine)
     {
         info[0] = 0;        //failed
         info[1] = sP_change; //INFINITY
@@ -814,8 +899,8 @@ int slitdec(        int ncols,
     m_zeta = malloc(MAX_MZETA * sizeof(int));
     z_rng = malloc(MAX_MZETA * sizeof(zeta_rng));
     ycen_offset = malloc(ncols * sizeof(int));
-    sP_old = malloc(ncols * sizeof(double));
-    sP_diff = malloc(ncols * sizeof(double));
+    sP_old = malloc(ncols_fine * sizeof(double));
+    sP_diff = malloc(ncols_fine * sizeof(double));
 
         // remove integer values from ycen, put into ycen_offset
     for (x = 0; x < ncols; x++)
@@ -824,7 +909,7 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
-    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
+    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, osamp_spec, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
 
     /* Loop through sL , sP reconstruction until convergence is reached */
     iter = 0;
@@ -1007,7 +1092,7 @@ int slitdec(        int ncols,
                 const zeta_rng *zr = &z_rng[mzeta_index(xx, yy)];
                 const int k0 = zr->min_x;
                 const int rng = zr->max_x - k0;
-                if (rng <= 2 * delta_x)
+                if (rng <= delta_x_fine)
                 {
                     for (n = 0; n <= rng; n++)
                         zw[n] = 0.e0;
@@ -1019,7 +1104,7 @@ int slitdec(        int ncols,
                     {
                         const double um = zw[m];
                         const double *restrict uv = zw + m;
-                        double *restrict arow = &p_Aij[paij_index(k0 + m, 2 * delta_x)];
+                        double *restrict arow = &p_Aij[paij_index(k0 + m, delta_x_fine)];
                         const int dmax = rng - m;
                         for (n = 0; n <= dmax; n++)
                             arow[n] += um * uv[n];
@@ -1051,13 +1136,13 @@ int slitdec(        int ncols,
                 {
                     x = zk[m];
                     const double um = zw[m];
-                    p_Aij[paij_index(x, 2 * delta_x)] += um * um;
+                    p_Aij[paij_index(x, delta_x_fine)] += um * um;
                     for (n = m + 1; n < nk; n++)
                     {
                         const int xn = zk[n];
                         const int lo = min(x, xn);
                         const int d = abs(xn - x);
-                        p_Aij[paij_index(lo, d + 2 * delta_x)] += zw[n] * um;
+                        p_Aij[paij_index(lo, d + delta_x_fine)] += zw[n] * um;
                     }
                     p_bj[pbj_index(x)] += imv * um;
                 }
@@ -1065,24 +1150,53 @@ int slitdec(        int ncols,
         }
 
         /* Mirror the upper bands into the lower bands */
-        for (m = 1; m <= 2 * delta_x; m++)
-            for (x = 0; x < ncols - m; x++)
-                p_Aij[paij_index(x + m, 2 * delta_x - m)] = p_Aij[paij_index(x, 2 * delta_x + m)];
+        for (m = 1; m <= delta_x_fine; m++)
+            for (x = 0; x < ncols_fine - m; x++)
+                p_Aij[paij_index(x + m, delta_x_fine - m)] = p_Aij[paij_index(x, delta_x_fine + m)];
 
         if (lambda_sP > 0.e0)
         {
             lambda = lambda_sP;
 
-            p_Aij[paij_index(0, 2 * delta_x)] += lambda;     /* Main diagonal  */
-            p_Aij[paij_index(0, 2 * delta_x + 1)] -= lambda; /* Upper diagonal */
-            for (x = 1; x < ncols - 1; x++)
+            p_Aij[paij_index(0, delta_x_fine)] += lambda;     /* Main diagonal  */
+            p_Aij[paij_index(0, delta_x_fine + 1)] -= lambda; /* Upper diagonal */
+            for (x = 1; x < ncols_fine - 1; x++)
             {
-                p_Aij[paij_index(x, 2 * delta_x - 1)] -= lambda;    /* Lower diagonal */
-                p_Aij[paij_index(x, 2 * delta_x)] += lambda * 2.e0; /* Main diagonal  */
-                p_Aij[paij_index(x, 2 * delta_x + 1)] -= lambda;    /* Upper diagonal */
+                p_Aij[paij_index(x, delta_x_fine - 1)] -= lambda;    /* Lower diagonal */
+                p_Aij[paij_index(x, delta_x_fine)] += lambda * 2.e0; /* Main diagonal  */
+                p_Aij[paij_index(x, delta_x_fine + 1)] -= lambda;    /* Upper diagonal */
             }
-            p_Aij[paij_index(ncols - 1, 2 * delta_x - 1)] -= lambda; /* Lower diagonal */
-            p_Aij[paij_index(ncols - 1, 2 * delta_x)] += lambda;     /* Main diagonal  */
+            p_Aij[paij_index(ncols_fine - 1, delta_x_fine - 1)] -= lambda; /* Lower diagonal */
+            p_Aij[paij_index(ncols_fine - 1, delta_x_fine)] += lambda;     /* Main diagonal  */
+        }
+
+        /* Selective fringe regularizer. The osamp-period ripple is a near-null
+           of the forward model (box integration over a detector pixel). Penalize
+           it with lambda_fringe * sum_blocks sum_i (sP_i - block_mean)^2, where a
+           block is the osamp_spec fine bins of one detector column. The operator
+           L = I - (1/s) J per block is symmetric idempotent (L^T L = L), so we
+           add lambda_fringe * L straight into the normal matrix. Its row sum is
+           zero, so the coarse (block-averaged) spectrum is untouched. */
+        if (lambda_fringe > 0.e0 && osamp_spec > 1)
+        {
+            double s_inv = 1.e0 / (double)osamp_spec;
+            double diag_add = lambda_fringe * (1.e0 - s_inv);
+            double off_add = -lambda_fringe * s_inv;
+            for (int c = 0; c < ncols; c++)
+            {
+                for (int i = 0; i < osamp_spec; i++)
+                {
+                    int xi_fine = c * osamp_spec + i;
+                    for (int j = 0; j < osamp_spec; j++)
+                    {
+                        int k = (c * osamp_spec + j) - xi_fine + delta_x_fine;
+                        if (i == j)
+                            p_Aij[paij_index(xi_fine, k)] += diag_add;
+                        else
+                            p_Aij[paij_index(xi_fine, k)] += off_add;
+                    }
+                }
+            }
         }
 
 #if REGULARIZE_DIAGONAL
@@ -1093,18 +1207,18 @@ int slitdec(        int ncols,
            The resulting spectrum value for masked columns will be ~0 (from p_bj[x]/diag). */
         {
             double max_diag = 0.0;
-            for (x = 0; x < ncols; x++)
+            for (x = 0; x < ncols_fine; x++)
             {
-                if (p_Aij[paij_index(x, 2 * delta_x)] > max_diag)
-                    max_diag = p_Aij[paij_index(x, 2 * delta_x)];
+                if (p_Aij[paij_index(x, delta_x_fine)] > max_diag)
+                    max_diag = p_Aij[paij_index(x, delta_x_fine)];
             }
             if (max_diag > 0.0)
             {
                 double min_diag = max_diag * 1.0e-10;
-                for (x = 0; x < ncols; x++)
+                for (x = 0; x < ncols_fine; x++)
                 {
-                    if (p_Aij[paij_index(x, 2 * delta_x)] < min_diag)
-                        p_Aij[paij_index(x, 2 * delta_x)] = min_diag;
+                    if (p_Aij[paij_index(x, delta_x_fine)] < min_diag)
+                        p_Aij[paij_index(x, delta_x_fine)] = min_diag;
                 }
             }
         }
@@ -1114,18 +1228,18 @@ int slitdec(        int ncols,
         bandsol(p_Aij, p_bj, MAX_PAIJ_X, MAX_PAIJ_Y);
 
         /* Save old spectrum, update, and compute change */
-        for (x = 0; x < ncols; x++)
+        for (x = 0; x < ncols_fine; x++)
             sP_old[x] = sP[sp_index(x)];
-        for (x = 0; x < ncols; x++)
+        for (x = 0; x < ncols_fine; x++)
             sP[sp_index(x)] = p_bj[pbj_index(x)];
-        for (x = 0; x < ncols; x++)
+        for (x = 0; x < ncols_fine; x++)
             sP_diff[x] = fabs(sP[sp_index(x)] - sP_old[x]);
 
         /* Convergence: 99th percentile of change relative to median spectrum */
-        sP_change = quick_select_percentile(sP_diff, ncols, 99.0);
-        for (x = 0; x < ncols; x++)
+        sP_change = quick_select_percentile(sP_diff, ncols_fine, 99.0);
+        for (x = 0; x < ncols_fine; x++)
             sP_diff[x] = sP[sp_index(x)];  /* reuse buffer for median calc */
-        sP_med = fabs(quick_select_median(sP_diff, ncols));
+        sP_med = fabs(quick_select_median(sP_diff, ncols_fine));
 
         /* Compute the model.
            x is the outer loop so that the zeta tensor, by far the largest
@@ -1210,7 +1324,7 @@ int slitdec(        int ncols,
 
     /* Uncertainty estimate */
 
-    for (x = 0; x < ncols; x++)
+    for (x = 0; x < ncols_fine; x++)
     {
         unc[sp_index(x)] = 0.;
         p_bj[pbj_index(x)] = 0.;
@@ -1238,17 +1352,17 @@ int slitdec(        int ncols,
         }
     }
 
-    for (x = 0; x < ncols; x++)
+    for (x = 0; x < ncols_fine; x++)
     {
         norm = p_bj[pbj_index(x)] - p_Aij[paij_index(x, 0)] / p_bj[pbj_index(x)];
         unc[sp_index(x)] = sqrt(unc[sp_index(x)] / norm * nrows);
     }
 
-    for (x = 0; x < delta_x; x++)
+    for (x = 0; x < delta_x * osamp_spec; x++)
     {
         sP[sp_index(x)] = unc[sp_index(x)] = 0;
     }
-    for (x = ncols - delta_x; x < ncols; x++)
+    for (x = ncols_fine - delta_x * osamp_spec; x < ncols_fine; x++)
     {
         sP[sp_index(x)] = unc[sp_index(x)] = 0;
     }
