@@ -225,7 +225,7 @@ delta_x = max(ceil(abs(y * curve[1] + y² * curve[2])))
 
 However, `slitdeltas` adds **additional** horizontal shift! With real data ranging from -3.0 to +2.6 pixels, this caused **out-of-bounds memory access** and crashes.
 
-**Fix applied** (slitdec.c lines 956-961):
+**Fix applied** (in `slitdec`, after the curve-polynomial `delta_x` loop):
 ```c
 // Account for additional shift from slitdeltas
 for (int iy = 0; iy < ny; iy++)
@@ -241,7 +241,7 @@ This ensures `nx = 4 * delta_x + 1` is large enough to allocate sufficient memor
 
 ### How slitdeltas is Used in C Code
 
-In the geometry calculation (slitdec.c:574-576):
+In the geometry calculation (the per-subpixel loop in `zeta_tensors`):
 ```c
 delta = (slitcurve[...1] + slitcurve[...2] * (dy - ycen[x])) * (dy - ycen[x])
         + slitdeltas[iy];
@@ -258,6 +258,29 @@ if (x + ix1 >= 0 && x + ix2 < ncols) {
 ```
 
 So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is added to the total shift from the curve polynomial.
+
+## Performance: zeta tensor and SLE fills
+
+`slitdec` was optimized in two rounds (full rationale and benchmarks in
+`speed.md`). The current structure future sessions should know about:
+
+- **zeta only, pixel-centric fills.** The geometry is a single `zeta`
+  tensor (subpixels contributing to each detector pixel); the old inverse
+  `xi` tensor is gone. Both SLE matrices (`l_Aij` for sL, `p_Aij` for sP)
+  are filled by iterating over detector pixels and summing pairs of that
+  pixel's zeta entries into the symmetric upper band, mirrored once at the
+  end. Band matrices are row-major (`(row)*band_width + (col)`).
+- **Dense-window merge (`zeta_rng`).** `zeta_tensors`/`zeta_add` maintain a
+  per-pixel `zeta_rng` (min/max of `iy` and of `x`). The fills merge a
+  pixel's entries by scattering into a dense window `zw[key - k0]` instead
+  of searching unique keys, with a unique-key fallback for over-wide
+  geometry (`rng > 2*osample` for sL, `> 2*delta_x` for sP).
+- **GOTCHA — scratch buffer sizing.** `zw`/`zk` must hold the larger of the
+  two windows, so they are sized `max(MAX_ZETA_Z, nx)`. `MAX_ZETA_Z` alone
+  (`3*(osample+1)`) is too small for the spectrum window when `delta_x` is
+  large — this is the same class of bug as the `delta_x` allocation issue
+  above. If you change either window's width, recheck this allocation.
+- **Model pass** iterates `x` outermost so `zeta` is read sequentially.
 
 ## Polynomial Degree Handling
 
@@ -300,7 +323,7 @@ If degree >5 is needed in the future, only the C code needs updating (change `*6
 
 ### Test Organization
 
-32 tests organized in 8 classes:
+`tests/test_slitdec.py` has 8 classes:
 - **TestBasicFunctionality**: Import, callable, basic execution
 - **TestOutputStructure**: Output format validation
 - **TestInputValidation**: Error handling for invalid inputs
@@ -310,13 +333,19 @@ If degree >5 is needed in the future, only the C code needs updating (change `*6
 - **TestMemoryManagement**: Input preservation, multiple calls
 - **TestRealData**: Tests on real FITS files from `data/` directory
 
+`tests/test_regression.py` adds golden-reference tests (see speed.md):
+they pin spectrum/slit-function/model/uncertainty (rtol 1e-10) and the
+output mask (exact) for 3 synthetic cases and every real FITS file.
+Goldens are gitignored local artifacts; regenerate with
+`uv run pytest tests/test_regression.py --update-golden`.
+
 ### Running Tests
 
-**Fast automated testing** (24 tests in ~0.2s):
+**Fast automated testing** (default run: ~36 passed, 1 skipped, 13 deselected):
 ```bash
 pytest
 ```
-Default runs exclude `@pytest.mark.save_output` tests for speed (configured in `pyproject.toml`).
+Default runs exclude `@pytest.mark.save_output` tests for speed (configured in `pyproject.toml`). The 1 skip is `J1228_tw.fits` (table-only, no 2D image).
 
 **Generate visualization plots** (8 tests in ~5s):
 ```bash
@@ -328,16 +357,20 @@ Tests marked with `@pytest.mark.save_output` automatically save outputs to `test
   - Top row: Input image, Model reconstruction, Difference (all viridis/seismic colormaps)
   - Bottom row: Extracted spectrum with ±1σ uncertainty, Slit function (both as line plots)
 
-Currently 4 marked tests (8 total with parametrization):
+Marked tests:
 - `test_basic_execution`
 - `test_with_custom_parameters`
 - `test_mask_modification`
-- `test_real_data_files` (parametrized over 5 FITS files)
+- `test_real_data_files` (parametrized over every FITS file in `data/`)
 
 ### Real Data Fixtures
 
 The `real_data_files` fixture (tests/conftest.py):
-1. Loads all FITS files from `data/*.fits`
+1. Loads all FITS files from `data/*.fits`. The image is taken from the
+   primary HDU if it has data, otherwise the fixture scans for the first
+   2D `ImageHDU` (e.g. multi-extension ESO/CRIRES files store data in a
+   `CHIPn.INT1` extension). Files with no 2D image (table-only, like
+   `J1228_tw.fits`) are skipped cleanly.
 2. Looks for corresponding `curvedelta_{basename}.npz` (preferred) or `slitdeltas_{basename}.npz` files
 3. Loads `slitcurve`, `slitdeltas`, and `ycen` from NPZ
 4. Wrapper automatically interpolates slitdeltas from nrows → ny before passing to C
@@ -345,13 +378,10 @@ The `real_data_files` fixture (tests/conftest.py):
 6. Computes `pix_unc` from Poisson noise: `sqrt(abs(im) + 1.0)`
 7. Marks NaN pixels as bad in mask (fully masked columns now handled by C code regularization)
 
-Currently 6 real data files:
-- `Hsim.fits` (90×53)
-- `Rsim.fits` (140×84)
-- `discontinuous.fits` (100×150)
-- `fixedslope.fits` (100×150)
-- `multislope.fits` (100×150)
-- `CRIRES1.fits` (176×2048) - has fully NaN columns
+Real data files in `data/` (gitignored, see Data Files below): `Hsim`,
+`Rsim`, `discontinuous`, `fixedslope`, `multislope`, `CRIRES1`, `CRIRES2`,
+`ANDES_R_FP1`, `CRIRES_UNE_J` (loaded from `CHIP1.INT1`), and `J1228_tw`
+(table-only, skipped). `CRIRES1.fits` has fully NaN columns.
 
 ## Common Issues and Solutions
 
