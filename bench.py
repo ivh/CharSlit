@@ -1,4 +1,39 @@
-"""Benchmark slitdec on the real data files. Usage: uv run python bench.py [nrepeat]"""
+"""Benchmark slitdec on the real data files. Usage: uv run python bench.py [nrepeat]
+
+This times ONLY the charslit.slitdec C call (each case is loaded once, then the
+call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
+
+Speedup analysis (baseline 8b97f33 "regression harness added", pre-speedup,
+vs latest after Round 1 pixel-centric/band-layout + Round 2 dense-window fills):
+
+  File           shape        baseline   latest   speedup
+  CRIRES1        176x2048      5852 ms    414 ms   14.1x
+  CRIRES2        176x2048      5861 ms    419 ms   14.0x
+  ANDES_R_FP1    404x2556      4988 ms    424 ms   11.8x
+  Hsim           90x53          8.3 ms    1.2 ms    7.0x
+  Rsim           140x84        20.5 ms    3.1 ms    6.6x
+  discontinuous  100x150       10.8 ms    3.7 ms    2.9x
+  multislope     100x150       12.9 ms    4.4 ms    2.9x
+  fixedslope     100x150       10.7 ms    3.9 ms    2.8x
+  CRIRES_UNE_J   2048x2048    29178 ms   9277 ms    3.1x
+  TOTAL                         45.9 s    10.6 s    4.35x
+
+The full extraction reaches ~14x on representative curved spectrograph frames
+(176x2048, matching cr2res swaths) — meeting/exceeding the ~10x seen in the
+cr2res C pipeline. The aggregate looks like only ~4x for two reasons unrelated
+to the C code:
+
+  1. The TOTAL is dominated (~88%) by the atypical 2048x2048 CRIRES_UNE_J frame,
+     which only speeds up 3.1x. Per-frame speedup tracks curvature / delta_x:
+     frames with a real curvedelta solution (wide p_Aij band, many zeta entries
+     per pixel) are exactly where the old O(mz^2) unique-key search + column-major
+     striding hurt most, so the pixel-centric + dense-window rewrite wins ~14x.
+     CRIRES_UNE_J has no curvature file (delta_x~0, near-diagonal spectrum system),
+     so its cost is the large-nrows slit-function solve, which only gained from
+     the band layout -> 3.1x.
+  2. The pytest golden run (48s -> 12s) additionally includes Python FITS loading,
+     fixture prep, and the rtol-1e-10 npz comparison, which do not speed up.
+"""
 
 import sys
 import time
@@ -15,9 +50,19 @@ NREPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 def load_case(fits_path):
     fits_path = Path(fits_path)
     with fits.open(fits_path) as hdul:
-        im = hdul[0].data.astype(np.float64)
-    if im.ndim != 2:
-        return None
+        # Primary HDU if it holds a 2D image, else first 2D ImageHDU
+        # (multi-extension ESO/CRIRES files store data in CHIPn.INT1).
+        im = None
+        if hdul[0].data is not None and np.ndim(hdul[0].data) == 2:
+            im = hdul[0].data
+        else:
+            for h in hdul:
+                if getattr(h, "data", None) is not None and np.ndim(h.data) == 2:
+                    im = h.data
+                    break
+        if im is None:
+            return None
+        im = im.astype(np.float64)
     nrows, ncols = im.shape
 
     slitcurve = np.zeros((ncols, 3))
