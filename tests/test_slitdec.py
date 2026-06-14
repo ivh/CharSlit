@@ -589,3 +589,146 @@ class TestRealData:
             uncertainty=result["uncertainty"],
             slitcurve_data=data["slitcurve_data"],
         )
+
+
+class TestPresetSlitfunction:
+    """Test single-pass extraction with a fixed (preset) slit function."""
+
+    def test_roundtrip_matches_normal_run(self, simple_image_data):
+        """A normal run's slit function fed back as a preset reproduces the spectrum."""
+        data = simple_image_data
+        normal = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+        )
+        assert normal["return_code"] == 0
+
+        preset = normal["slitfunction"].copy()
+        result = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+            preset_slitfunc=preset,
+        )
+        assert result["return_code"] == 0
+        # Preset run echoes the supplied slit function (already normalized).
+        np.testing.assert_allclose(result["slitfunction"], preset, rtol=1e-10)
+        # Spectrum matches the normal run that produced this slit function.
+        np.testing.assert_allclose(result["spectrum"], normal["spectrum"], rtol=1e-6, atol=1e-6)
+
+    def test_slit_solve_is_actually_skipped(self, simple_image_data):
+        """A deliberately wrong (flat) preset is used as-is, not re-solved.
+
+        Proves preset mode skips the slit-function solve: the output slit
+        function must equal the flat preset exactly, even though the data's
+        true profile (recovered by a normal run) is clearly non-flat.
+        """
+        data = simple_image_data
+        normal = charslit.slitdec(
+            data["im"], data["pix_unc"], data["mask"], data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+        )
+        # Sanity: the real profile is non-flat, so a flat preset is "wrong".
+        assert normal["slitfunction"].std() > 1e-3
+
+        flat = np.full(data["ny"], 1.0 / data["osample"])
+        result = charslit.slitdec(
+            data["im"], data["pix_unc"], data["mask"], data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+            preset_slitfunc=flat,
+        )
+        assert result["return_code"] == 0
+        # Output echoes the flat preset (normalized to sum osample); it was NOT
+        # re-solved into the data's actual non-flat profile.
+        flat_norm = flat / (flat.sum() / data["osample"])
+        np.testing.assert_allclose(result["slitfunction"], flat_norm, rtol=1e-12)
+        assert result["slitfunction"].std() < 1e-12  # still flat
+        assert not np.allclose(result["slitfunction"], normal["slitfunction"], atol=1e-2)
+
+    def test_recovers_spectrum_from_clean_model(self, simple_image_data):
+        """Given a clean model image and its true slit function, preset mode
+        recovers the generating spectrum to high precision.
+
+        The image is the C code's own forward model from a normal run, so it is
+        exactly representable; with the matching slit function as a preset the
+        single sP solve must reproduce the spectrum that built it.
+        """
+        data = simple_image_data
+        normal = charslit.slitdec(
+            data["im"], data["pix_unc"], data["mask"], data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+            kappa=0,
+        )
+        assert normal["return_code"] == 0
+
+        clean_im = np.ascontiguousarray(normal["model"])
+        result = charslit.slitdec(
+            clean_im,
+            np.ones_like(clean_im),
+            np.ones(clean_im.shape, dtype=np.uint8),
+            data["ycen"], data["slitcurve"], data["slitdeltas"],
+            osample=data["osample"], kappa=0,
+            preset_slitfunc=normal["slitfunction"].copy(),
+        )
+        assert result["return_code"] == 0
+        np.testing.assert_allclose(result["spectrum"], normal["spectrum"], rtol=1e-8, atol=1e-8)
+
+    def test_preset_length_ny(self, simple_image_data):
+        """A preset of length ny is used directly."""
+        data = simple_image_data
+        preset = np.full(data["ny"], 1.0 / data["osample"])
+        result = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+            preset_slitfunc=preset,
+        )
+        assert result["return_code"] == 0
+        assert result["slitfunction"].shape == (data["ny"],)
+        assert result["spectrum"].shape == (data["ncols"],)
+
+    def test_preset_length_nrows_interpolated(self, simple_image_data):
+        """A preset of length nrows is interpolated up to ny."""
+        data = simple_image_data
+        preset = np.ones(data["nrows"])
+        result = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+            preset_slitfunc=preset,
+        )
+        assert result["return_code"] == 0
+        assert result["slitfunction"].shape == (data["ny"],)
+
+    def test_preset_wrong_length_raises(self, simple_image_data):
+        """A preset that is neither nrows nor ny long raises."""
+        data = simple_image_data
+        wrong = np.ones(7)
+        with pytest.raises(RuntimeError, match="preset_slitfunc must have length"):
+            charslit.slitdec(
+                data["im"],
+                data["pix_unc"],
+                data["mask"],
+                data["ycen"],
+                data["slitcurve"],
+                data["slitdeltas"],
+                osample=data["osample"],
+                preset_slitfunc=wrong,
+            )

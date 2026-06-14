@@ -1,6 +1,7 @@
 #manually added
 goodplots/
 plots/
+scratch/
 *.fits
 *.npz
 *.png

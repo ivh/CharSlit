@@ -1,6 +1,8 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/optional.h>
 #include <cstring>
+#include <optional>
 
 extern "C" {
 #include "slitdec.h"
@@ -19,7 +21,8 @@ nb::dict slitdec_wrapper(
     double lambda_sP,
     double lambda_sL,
     int maxiter,
-    double kappa
+    double kappa,
+    std::optional<nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>> preset_slitfunc
 ) {
     // Get dimensions from input image
     int nrows = im.shape(0);
@@ -101,12 +104,45 @@ nb::dict slitdec_wrapper(
     double* unc = new double[ncols];
     double* info = new double[5];
 
-    // Initialize sP and sL with ones (starting guess)
+    // Initialize sP with ones (starting guess)
     for (int i = 0; i < ncols; i++) {
         sP[i] = 1.0;
     }
-    for (int i = 0; i < ny; i++) {
-        sL[i] = 1.0 / osample;
+
+    // Seed sL. With a preset slit function we copy it into sL and tell the
+    // C code to skip the sL solve (single-pass extraction). The preset may be
+    // length ny (used directly) or nrows (linearly interpolated up, mirroring
+    // the slitdeltas handling above). Otherwise seed the flat 1/osample guess.
+    int use_preset = 0;
+    if (preset_slitfunc.has_value()) {
+        use_preset = 1;
+        const auto& ps = preset_slitfunc.value();
+        int ps_len = ps.shape(0);
+        const double* ps_data = ps.data();
+        if (ps_len == ny) {
+            std::memcpy(sL, ps_data, ny * sizeof(double));
+        } else if (ps_len == nrows) {
+            for (int i = 0; i < ny; i++) {
+                double pos = i * (nrows - 1.0) / (ny - 1.0);
+                int idx_low = static_cast<int>(pos);
+                int idx_high = idx_low + 1;
+                if (idx_high >= nrows) {
+                    sL[i] = ps_data[nrows - 1];
+                } else {
+                    double frac = pos - idx_low;
+                    sL[i] = (1.0 - frac) * ps_data[idx_low] + frac * ps_data[idx_high];
+                }
+            }
+        } else {
+            // Free already-allocated buffers before throwing
+            if (allocated_interp && slitdeltas_interp != nullptr) delete[] slitdeltas_interp;
+            delete[] sP; delete[] sL; delete[] model; delete[] unc; delete[] info;
+            throw std::runtime_error("preset_slitfunc must have length nrows or ny = osample * (nrows + 1) + 1");
+        }
+    } else {
+        for (int i = 0; i < ny; i++) {
+            sL[i] = 1.0 / osample;
+        }
     }
 
     // Create a copy of mask since slitdec modifies it
@@ -151,6 +187,7 @@ nb::dict slitdec_wrapper(
         lambda_sL,
         maxiter,
         kappa,
+        use_preset,
         sP,
         sL,
         model,
@@ -215,6 +252,7 @@ NB_MODULE(charslit, m) {
           nb::arg("lambda_sL") = 1.0,
           nb::arg("maxiter") = 20,
           nb::arg("kappa") = 10.0,
+          nb::arg("preset_slitfunc") = nb::none(),
           "Slit decomposition with slit characterization\n\n"
           "Parameters\n"
           "----------\n"
@@ -241,7 +279,12 @@ NB_MODULE(charslit, m) {
           "    Maximum number of iterations (default: 20)\n"
           "kappa : float, optional\n"
           "    Outlier rejection threshold in sigma units (default: 10.0).\n"
-          "    Pixels with |residual| > kappa * sigma are masked. Set to 0 to disable.\n\n"
+          "    Pixels with |residual| > kappa * sigma are masked. Set to 0 to disable.\n"
+          "preset_slitfunc : ndarray (nrows,) or (ny,), optional\n"
+          "    Fixed slit function for single-pass extraction. When given, the\n"
+          "    slit-function solve is skipped and only the spectrum is fitted\n"
+          "    against this profile. Length nrows is interpolated to ny; the\n"
+          "    preset is normalized to sum osample internally. Default: None.\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"

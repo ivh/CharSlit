@@ -663,6 +663,7 @@ int slitdec(        int ncols,
                     double lambda_sL,
                     int maxiter,
                     double kappa,
+                    int use_preset,
                     double *sP,
                     double *sL,
                     double *model,
@@ -826,11 +827,26 @@ int slitdec(        int ncols,
     
     zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
 
+    /* Preset slit function: the caller supplies sL and we skip solving for
+       it. Normalize the preset once here (to sum osample) so callers do not
+       have to; inside the loop sL is then left untouched. */
+    if (use_preset)
+    {
+        norm = 0.e0;
+        for (iy = 0; iy < ny; iy++)
+            norm += sL[sl_index(iy)];
+        norm /= osample;
+        for (iy = 0; iy < ny; iy++)
+            sL[sl_index(iy)] /= norm;
+    }
+
     /* Loop through sL , sP reconstruction until convergence is reached */
     iter = 0;
     do
     {
-        /* Compute slit function sL */
+        /* Compute slit function sL (skipped when a preset sL is supplied) */
+        if (!use_preset)
+        {
 
         /* Prepare the RHS and the matrix */
         for (iy = 0; iy < MAX_LBJ; iy++)
@@ -983,6 +999,8 @@ int slitdec(        int ncols,
         norm /= osample;
         for (iy = 0; iy < ny; iy++)
             sL[sl_index(iy)] /= norm;
+
+        } /* end if (!use_preset) */
 
         /* Compute spectrum sP */
         for (x = 0; x < MAX_PBJ; x++)
