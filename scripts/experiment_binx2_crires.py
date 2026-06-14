@@ -1,4 +1,4 @@
-"""Bin-x2 LSF-recovery validation on real CRIRES+ U-Ne data (see plan.md).
+"""Bin-x2 LSF-recovery validation on real CRIRES+ U-Ne data (see OSAMP_EXPERIMENTS.md).
 
 The native CRIRES swath (chip 2, order 4, x0=512, width=512, nrows=150) is
 well sampled (FWHM ~2.9 px), so an unbinned extraction at osamp_spec=1 is
@@ -40,7 +40,7 @@ IMAGE = "data/CRIRES_UNE_J.fits"
 TW = "data/J1228_tw.fits"
 CHIP, ORDER, X0, WIDTH, NROWS = 2, 4, 512, 512, 150
 
-# analysis lines from plan.md (native swath columns); 60.5/68.5 are 8 px
+# analysis lines (see OSAMP_EXPERIMENTS.md; native swath columns); 60.5/68.5 are 8 px
 # apart so their windows are narrowed to avoid overlap
 LINES = [37.8, 60.5, 68.5, 169.2, 310.7, 324.6, 444.6]
 WIN_DEFAULT = 4.5
