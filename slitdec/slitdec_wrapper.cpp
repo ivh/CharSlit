@@ -309,6 +309,12 @@ NB_MODULE(charslit, m) {
           "    mask : ndarray (nrows, ncols), uint8\n"
           "        Updated pixel mask after outlier rejection\n"
           "    return_code : int\n"
-          "        Return code from C function (0 on success)\n"
+          "        Return code from C function (0 on success)\n\n"
+          "Notes\n"
+          "-----\n"
+          "Large images are processed on a small thread pool; set the\n"
+          "CHARSLIT_THREADS environment variable to override the thread\n"
+          "count (default: min(12, cores); 1 disables threading).\n"
+          "Results do not depend on the thread count.\n"
     );
 }

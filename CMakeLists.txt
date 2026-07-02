@@ -40,5 +40,9 @@ target_include_directories(charslit PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/slitdec
 )
 
+# The SLE fills run on a small pthread pool
+find_package(Threads REQUIRED)
+target_link_libraries(charslit PRIVATE Threads::Threads)
+
 # Install the extension module
 install(TARGETS charslit LIBRARY DESTINATION .)

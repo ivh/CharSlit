@@ -3,7 +3,150 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
 #include "slitdec.h"
+
+/* ---------- Minimal parallel-for ----------
+   Work is split into a FIXED number of chunks (PAR_CHUNKS, independent of
+   the thread count); threads grab chunks with an atomic counter and each
+   chunk accumulates into its own partial buffers, which the caller then
+   reduces in chunk order. Results are therefore identical for any number
+   of threads >= 2; nthreads == 1 (or small images) takes the plain
+   sequential code path. Thread count: CHARSLIT_THREADS env var, default
+   min(8, online cores). */
+#define PAR_CHUNKS 32
+#define PAR_MAX_THREADS 64
+
+/* Persistent worker pool: created once per slitdec call, woken per
+   parallel region (the fills run ~5 regions per iteration; spawning
+   threads each time measurably added up). pool == NULL degrades to
+   running the chunks sequentially on the caller. */
+typedef struct
+{
+    pthread_t th[PAR_MAX_THREADS];
+    int nworkers; /* excluding the calling thread */
+    pthread_mutex_t mu;
+    pthread_cond_t cv_work, cv_done;
+    int generation;
+    int shutdown;
+    int active;
+    void (*fn)(void *, int);
+    void *ctx;
+    _Atomic int next;
+    int nchunks;
+} pool_t;
+
+static void pool_work(pool_t *p)
+{
+    int k;
+    while ((k = atomic_fetch_add_explicit(&p->next, 1, memory_order_relaxed)) < p->nchunks)
+        p->fn(p->ctx, k);
+}
+
+static void *pool_thread(void *arg)
+{
+    pool_t *p = arg;
+    int mygen = 0;
+    pthread_mutex_lock(&p->mu);
+    for (;;)
+    {
+        while (p->generation == mygen && !p->shutdown)
+            pthread_cond_wait(&p->cv_work, &p->mu);
+        if (p->shutdown)
+            break;
+        mygen = p->generation;
+        pthread_mutex_unlock(&p->mu);
+        pool_work(p);
+        pthread_mutex_lock(&p->mu);
+        if (--p->active == 0)
+            pthread_cond_signal(&p->cv_done);
+    }
+    pthread_mutex_unlock(&p->mu);
+    return NULL;
+}
+
+static pool_t *pool_start(int nthreads)
+{
+    if (nthreads <= 1)
+        return NULL;
+    if (nthreads > PAR_MAX_THREADS)
+        nthreads = PAR_MAX_THREADS;
+    pool_t *p = calloc(1, sizeof(pool_t));
+    if (!p)
+        return NULL;
+    pthread_mutex_init(&p->mu, NULL);
+    pthread_cond_init(&p->cv_work, NULL);
+    pthread_cond_init(&p->cv_done, NULL);
+    for (int i = 0; i < nthreads - 1; i++)
+    {
+        if (pthread_create(&p->th[i], NULL, pool_thread, p) != 0)
+            break;
+        p->nworkers++;
+    }
+    return p;
+}
+
+static void pool_run(pool_t *p, void (*fn)(void *, int), void *ctx, int nchunks)
+{
+    if (!p || p->nworkers == 0)
+    {
+        for (int k = 0; k < nchunks; k++)
+            fn(ctx, k);
+        return;
+    }
+    pthread_mutex_lock(&p->mu);
+    p->fn = fn;
+    p->ctx = ctx;
+    atomic_store_explicit(&p->next, 0, memory_order_relaxed);
+    p->nchunks = nchunks;
+    p->active = p->nworkers;
+    p->generation++;
+    pthread_cond_broadcast(&p->cv_work);
+    pthread_mutex_unlock(&p->mu);
+    pool_work(p); /* the caller participates */
+    pthread_mutex_lock(&p->mu);
+    while (p->active > 0)
+        pthread_cond_wait(&p->cv_done, &p->mu);
+    pthread_mutex_unlock(&p->mu);
+}
+
+static void pool_stop(pool_t *p)
+{
+    if (!p)
+        return;
+    pthread_mutex_lock(&p->mu);
+    p->shutdown = 1;
+    pthread_cond_broadcast(&p->cv_work);
+    pthread_mutex_unlock(&p->mu);
+    for (int i = 0; i < p->nworkers; i++)
+        pthread_join(p->th[i], NULL);
+    pthread_mutex_destroy(&p->mu);
+    pthread_cond_destroy(&p->cv_work);
+    pthread_cond_destroy(&p->cv_done);
+    free(p);
+}
+
+static int par_nthreads(int ncols, int nrows)
+{
+    const char *env = getenv("CHARSLIT_THREADS");
+    long n;
+    if (env && *env)
+        n = atol(env);
+    else
+    {
+        n = sysconf(_SC_NPROCESSORS_ONLN);
+        if (n > 12)
+            n = 12;
+    }
+    if (n < 1)
+        n = 1;
+    /* Small images: thread spawn overhead exceeds the work */
+    if ((size_t)ncols * nrows < 100000)
+        n = 1;
+    return (int)n;
+}
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define max(a, b) (((a) > (b)) ? (a) : (b))
@@ -65,7 +208,7 @@ int _nd = 0;
 #if DEBUG
 static long zeta_index(long x, long y, long z)
 {
-    long i = z + y * MAX_ZETA_Z + x * MAX_ZETA_Z * _nrows;
+    long i = z + x * MAX_ZETA_Z + y * MAX_ZETA_Z * _ncols;
     if ((i < 0) | (i >= MAX_ZETA))
     {
         printf("INDEX OUT OF BOUNDS. Zeta[%li, %li, %li]\n", x, y, z);
@@ -76,7 +219,7 @@ static long zeta_index(long x, long y, long z)
 
 static long mzeta_index(long x, long y)
 {
-    long i = y + x * _nrows;
+    long i = x + y * _ncols;
     if ((i < 0) | (i >= MAX_MZETA))
     {
         printf("INDEX OUT OF BOUNDS. Mzeta[%li, %li]\n", x, y);
@@ -190,8 +333,12 @@ static long sl_index(long i)
     return i;
 }
 #else
-#define zeta_index(x, y, z) ((z) + (y)*MAX_ZETA_Z + (x)*MAX_ZETA_Z * _nrows)
-#define mzeta_index(x, y) ((y) + (x)*_nrows)
+/* zeta is y-major: one detector row's lists are contiguous, so the fills,
+   the model and the uncertainty pass can iterate rows outermost (which keeps
+   their band-matrix windows cache-resident) while still reading zeta
+   sequentially. */
+#define zeta_index(x, y, z) ((z) + (x)*MAX_ZETA_Z + (y)*MAX_ZETA_Z * _ncols)
+#define mzeta_index(x, y) ((x) + (y)*_ncols)
 #define curve_index(x, y) ((x)*6 + (y))
 // Band matrices are stored row-major (band entries for one row are
 // contiguous): this matches the access pattern of both the SLE fill
@@ -444,6 +591,13 @@ static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
     }
 }
 
+static void zeta_build_cols(
+    int ncols, int nrows, int xsrc0, int xsrc1, int xown0, int xown1,
+    double *ycen, int *ycen_offset, int osample,
+    double *slitcurve, double *slitdeltas,
+    int *iy1c, int *iy2c, double *d1c, double *d2c, double *dyc,
+    zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng);
+
 int zeta_tensors(
     int ncols,
     int nrows,
@@ -527,6 +681,20 @@ int zeta_tensors(
     Note that zeta is used in the equations for sL, sP and for the model but it
     does not involve the data, only the geometry. Thus it can be pre-computed once.
     */
+    /* The loop is row-outer so that zeta (y-major) is written near-
+       sequentially. The per-column recurrences (iy1, iy2, dy) live in
+       small state arrays and execute exactly the same operation sequence
+       per column as the historic column-outer loop, so all inserted
+       values are bit-identical; only the order of entries within one
+       pixel's list changes (sums over them reorder at the rounding
+       level). */
+    int *iy1c = malloc(ncols * sizeof(int));
+    int *iy2c = malloc(ncols * sizeof(int));
+    double *d1c = malloc(ncols * sizeof(double));
+    double *d2c = malloc(ncols * sizeof(double));
+    double *dyc = malloc(ncols * sizeof(double));
+
+    (void)ny;
     for (x = 0; x < ncols; x++)
     {
         /*
@@ -546,9 +714,8 @@ int zeta_tensors(
         the same pattern repeates for all rows: we only need to initialize iy1 and iy2 and keep
         incrementing them by osample.
         */
-
-        iy2 = osample - floor(ycen[x] * osample);
-        iy1 = iy2 - osample;
+        iy2c[x] = osample - floor(ycen[x] * osample);
+        iy1c[x] = iy2c[x] - osample;
 
         /*
         Handling partial subpixels cut by detector pixel rows is again tricky. Here we have three
@@ -566,35 +733,70 @@ int zeta_tensors(
 
         dy=(iy-(y_lower_lim+ycen[x])*osample)*step-0.5*step
         */
-
-        d1 = fmod(ycen[x], step);
-        if (d1 == 0)
-            d1 = step;
-        d2 = step - d1;
+        d1c[x] = fmod(ycen[x], step);
+        if (d1c[x] == 0)
+            d1c[x] = step;
+        d2c[x] = step - d1c[x];
 
         /* Define initial distance from ycen       */
         /* It is given by the center of the first  */
         /* subpixel falling into pixel y_lower_lim */
-        dy = ycen[x] - floor((y_lower_lim + ycen[x]) / step) * step - step;
+        dyc[x] = ycen[x] - floor((y_lower_lim + ycen[x]) / step) * step - step;
+    }
 
-        /*
-        Now we go detector pixels x and y incrementing subpixels looking for their contributions
-        to the current and adjacent pixels. Note that the curvature/tilt of the projected slit
-        image could be so large that subpixel iy may not contribute to column x at all. On the
-        other hand, subpixels around ycen by definition must contribute to pixel x,y.
+    /*
+    Now we go detector pixels x and y incrementing subpixels looking for their contributions
+    to the current and adjacent pixels. Note that the curvature/tilt of the projected slit
+    image could be so large that subpixel iy may not contribute to column x at all. On the
+    other hand, subpixels around ycen by definition must contribute to pixel x,y.
 
-        Each subpixel is assumed to be exactly 1 detector pixel wide; a horizontal shift delta
-        divides its weight w between columns ix1=int(delta) and ix2=ix1+signum(delta) as
-        (1-|delta-ix1|)*w and |delta-ix1|*w. The yy offset is required because the iy subpixel
-        contributes to the yy row in the xx column of detector pixels where yy and y are in the
-        same row. In the packed array this is not necessarily true. Instead, what we know is:
-        y+ycen_offset[x] == yy+ycen_offset[xx]
-        */
+    Each subpixel is assumed to be exactly 1 detector pixel wide; a horizontal shift delta
+    divides its weight w between columns ix1=int(delta) and ix2=ix1+signum(delta) as
+    (1-|delta-ix1|)*w and |delta-ix1|*w. The yy offset is required because the iy subpixel
+    contributes to the yy row in the xx column of detector pixels where yy and y are in the
+    same row. In the packed array this is not necessarily true. Instead, what we know is:
+    y+ycen_offset[x] == yy+ycen_offset[xx]
+    */
+    zeta_build_cols(ncols, nrows, 0, ncols, 0, ncols, ycen, ycen_offset,
+                    osample, slitcurve, slitdeltas, iy1c, iy2c, d1c, d2c, dyc,
+                    zeta, m_zeta, z_rng);
 
-        for (y = 0; y < nrows; y++)
+    free(iy1c);
+    free(iy2c);
+    free(d1c);
+    free(d2c);
+    free(dyc);
+    return 0;
+}
+
+/* Process source columns [xsrc0, xsrc1) but insert only entries whose
+   target column falls in [xown0, xown1): a source column feeds target
+   columns at most the maximum horizontal shift away, so parallel chunks
+   re-process a small halo of source columns around their owned range and
+   each pixel's entries are then inserted by exactly one chunk, in the same
+   (y, x, iy) order as the sequential build - the zeta content is
+   bit-identical for any chunking. The per-column recurrence state
+   (iy1c/iy2c/dyc) runs complete within one chunk, so no state hand-off
+   between chunks is needed. */
+static void zeta_build_cols(
+    int ncols, int nrows, int xsrc0, int xsrc1, int xown0, int xown1,
+    double *ycen, int *ycen_offset, int osample,
+    double *slitcurve, double *slitdeltas,
+    int *iy1c, int *iy2c, double *d1c, double *d2c, double *dyc,
+    zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng)
+{
+    int x, xx, y, yy, ix1, ix2, iy, iy1, iy2;
+    double step, delta, w;
+    step = 1.e0 / osample;
+
+    for (y = 0; y < nrows; y++)
+    {
+        for (x = xsrc0; x < xsrc1; x++)
         {
-            iy1 += osample; // Bottom subpixel falling in row y
-            iy2 += osample; // Top subpixel falling in row y
+            const double d1 = d1c[x], d2 = d2c[x];
+            double dy = dyc[x];
+            iy1 = iy1c[x] += osample; // Bottom subpixel falling in row y
+            iy2 = iy2c[x] += osample; // Top subpixel falling in row y
             dy -= step;
             for (iy = iy1; iy <= iy2; iy++)
             {
@@ -621,12 +823,14 @@ int zeta_tensors(
                     {
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 w - fabs(delta - ix1) * w);
+                        if (xx >= xown0 && xx < xown1)
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                                     w - fabs(delta - ix1) * w);
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 fabs(delta - ix1) * w);
+                        if (xx >= xown0 && xx < xown1)
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                                     fabs(delta - ix1) * w);
                     }
                 }
                 else if (ix1 > ix2) /* Subpixel iy shifts to the left from column x */
@@ -635,24 +839,825 @@ int zeta_tensors(
                     {
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 fabs(delta - ix1) * w);
+                        if (xx >= xown0 && xx < xown1)
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                                     fabs(delta - ix1) * w);
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
-                                 w - fabs(delta - ix1) * w);
+                        if (xx >= xown0 && xx < xown1)
+                            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                                     w - fabs(delta - ix1) * w);
                     }
                 }
                 else /* Subpixel iy stays inside column x */
                 {
                     xx = x + ix1;
                     yy = y + ycen_offset[x] - ycen_offset[xx];
-                    zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy, w);
+                    if (xx >= xown0 && xx < xown1)
+                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy, w);
                 }
+            }
+            dyc[x] = dy;
+        }
+    }
+}
+
+/* Parallel zeta build, chunked over source/target COLUMNS: a source
+   column feeds target columns at most the maximum horizontal shift away,
+   so each chunk re-processes a halo of source columns around its owned
+   target range and every pixel's zeta list is written by exactly one
+   chunk in the exact sequential order - the result is bit-identical to
+   zeta_tensors() for any chunk or thread count. Each chunk runs its
+   columns' recurrences completely, so no state hand-off is needed. */
+typedef struct
+{
+    int ncols, nrows, ny, osample, K, halo, y_lower_lim;
+    double *ycen;
+    int *ycen_offset;
+    double *slitcurve, *slitdeltas;
+    zeta_ref *zeta;
+    int *m_zeta;
+    zeta_rng *z_rng;
+    _Atomic int fail;
+} zbuild_ctx;
+
+static void zeta_build_chunk(void *p, int k)
+{
+    zbuild_ctx *c = p;
+    const int ncols = c->ncols, nrows = c->nrows, osample = c->osample;
+    const double step = 1.e0 / osample;
+    const int x0 = (int)((size_t)k * ncols / c->K);
+    const int x1 = (int)((size_t)(k + 1) * ncols / c->K);
+    int x, yy;
+    if (x0 >= x1)
+        return;
+    /* clear the owned columns of the per-pixel bookkeeping */
+    for (yy = 0; yy < nrows; yy++)
+        for (x = x0; x < x1; x++)
+        {
+            const size_t i = x + (size_t)yy * ncols;
+            c->m_zeta[i] = 0;
+            c->z_rng[i].min_iy = INT_MAX;
+            c->z_rng[i].max_iy = INT_MIN;
+            c->z_rng[i].min_x = INT_MAX;
+            c->z_rng[i].max_x = INT_MIN;
+        }
+    const int xsrc0 = max(0, x0 - c->halo);
+    const int xsrc1 = min(ncols, x1 + c->halo);
+    int *iy1c = malloc(ncols * sizeof(int));
+    int *iy2c = malloc(ncols * sizeof(int));
+    double *dyc = malloc(ncols * sizeof(double));
+    double *d1c = malloc(ncols * sizeof(double));
+    double *d2c = malloc(ncols * sizeof(double));
+    if (!iy1c || !iy2c || !dyc || !d1c || !d2c)
+    {
+        free(iy1c); free(iy2c); free(dyc); free(d1c); free(d2c);
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    for (x = xsrc0; x < xsrc1; x++)
+    {
+        iy2c[x] = osample - floor(c->ycen[x] * osample);
+        iy1c[x] = iy2c[x] - osample;
+        d1c[x] = fmod(c->ycen[x], step);
+        if (d1c[x] == 0)
+            d1c[x] = step;
+        d2c[x] = step - d1c[x];
+        dyc[x] = c->ycen[x] - floor((c->y_lower_lim + c->ycen[x]) / step) * step - step;
+    }
+    zeta_build_cols(ncols, nrows, xsrc0, xsrc1, x0, x1, c->ycen,
+                    c->ycen_offset, osample, c->slitcurve, c->slitdeltas,
+                    iy1c, iy2c, d1c, d2c, dyc, c->zeta, c->m_zeta, c->z_rng);
+    free(iy1c);
+    free(iy2c);
+    free(dyc);
+    free(d1c);
+    free(d2c);
+}
+
+static int zeta_tensors_par(
+    int ncols, int nrows, int ny, double *ycen, int *ycen_offset,
+    int y_lower_lim, int osample, double *slitcurve, double *slitdeltas,
+    zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng, int delta_x, pool_t *pool)
+{
+    zbuild_ctx c;
+    /* Halo: |shift| <= delta_x for curvature or slitdeltas alone; the sum
+       of both is bounded by 2*delta_x, +2 for the split-target column and
+       rounding. Chunks that would mostly re-process halo fall back. */
+    const int halo = 2 * delta_x + 2;
+    int K = min(PAR_CHUNKS, max(1, ncols / (2 * halo)));
+    if (K <= 1)
+        return zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim,
+                            osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
+    c.ncols = ncols;
+    c.nrows = nrows;
+    c.ny = ny;
+    c.osample = osample;
+    c.K = K;
+    c.halo = halo;
+    c.y_lower_lim = y_lower_lim;
+    c.ycen = ycen;
+    c.ycen_offset = ycen_offset;
+    c.slitcurve = slitcurve;
+    c.slitdeltas = slitdeltas;
+    c.zeta = zeta;
+    c.m_zeta = m_zeta;
+    c.z_rng = z_rng;
+    atomic_store(&c.fail, 0);
+    pool_run(pool, zeta_build_chunk, &c, K);
+    if (atomic_load(&c.fail))
+        return zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim,
+                            osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
+    return 0;
+}
+
+
+/* ---------- Fast path for exactly flat geometry ----------
+   When every horizontal shift is exactly zero (all curvature coefficients
+   and all slitdeltas are 0.0), pixel (x,y) receives exactly the subpixels
+   iy = k0col[x] + y*osample .. + osample of its own column, with weights
+   (d1, step, ..., step, step-d1) where d1 = d1col[x]. The zeta tensor is
+   then fully determined by ycen, so the SLE fills, the model and the
+   uncertainty pass are computed directly, without building or streaming
+   zeta (by far the largest array). All sums are algebraically identical
+   to the general path; accumulation order differs only at the rounding
+   level (same class of reordering as the Round 1/2 optimizations). */
+
+static void flat_setup(int ncols, int osample, const double *ycen,
+                       int *k0col, double *d1col)
+{
+    const double step = 1.e0 / osample;
+    for (int x = 0; x < ncols; x++)
+    {
+        /* same expressions as in zeta_tensors: k0col[x] is the first
+           subpixel of row y=0, i.e. iy1 after the first `iy1 += osample` */
+        k0col[x] = osample - floor(ycen[x] * osample);
+        double d1 = fmod(ycen[x], step);
+        if (d1 == 0)
+            d1 = step;
+        d1col[x] = d1;
+    }
+}
+
+/* sL system: one pixel contributes the outer product of
+   sP[x] * (d1, s, ..., s, s-d1) at band rows k0..k0+osample. Per detector
+   row y and per k0-class c the weight products are polynomials in d1 of
+   degree <= 2, so all contributions of one row collapse into 5 moments
+   per class: M{0,1,2} = sum mask*sP^2*d1^{0,1,2}, R{0,1} = sum mask*im*sP*d1^{0,1}. */
+/* Fills rows y0..y1-1; band-row indices are offset by lo so the target can
+   be a partial slice (lo = 0 with the full matrices for the sequential
+   call). */
+static void flat_fill_sL(int ncols, int y0, int y1, int osample,
+                         const double *im, const unsigned char *mask,
+                         const double *sP, const int *k0col, const double *d1col,
+                         double *scratch, int lo, double *l_Aij, double *l_bj)
+{
+    const double s = 1.e0 / osample;
+    const int bw = 4 * osample + 1;
+    const int nc = osample + 1; /* classes c = 1..osample, indexed directly */
+    /* Four interleaved accumulator sets (combined per row) break the
+       serial dependency chains through the per-class sums; this only
+       reorders the additions at the rounding level. */
+    double *M0 = scratch, *M1 = M0 + 4 * nc, *M2 = M1 + 4 * nc,
+           *R0 = M2 + 4 * nc, *R1 = R0 + 4 * nc;
+
+    for (int y = y0; y < y1; y++)
+    {
+        for (int c = 0; c < 4 * nc; c++)
+            M0[c] = M1[c] = M2[c] = R0[c] = R1[c] = 0.e0;
+        const double *imrow = im + (size_t)y * ncols;
+        const unsigned char *mrow = mask + (size_t)y * ncols;
+        for (int x = 0; x < ncols; x++)
+        {
+            if (!mrow[x])
+                continue;
+            const int c = k0col[x] + nc * (x & 3);
+            const double d = d1col[x];
+            const double a = sP[x] * sP[x];
+            const double b = imrow[x] * sP[x];
+            M0[c] += a;
+            M1[c] += a * d;
+            M2[c] += a * d * d;
+            R0[c] += b;
+            R1[c] += b * d;
+        }
+        for (int c = 1; c <= osample; c++)
+        {
+            M0[c] = ((M0[c] + M0[c + nc]) + M0[c + 2 * nc]) + M0[c + 3 * nc];
+            M1[c] = ((M1[c] + M1[c + nc]) + M1[c + 2 * nc]) + M1[c + 3 * nc];
+            M2[c] = ((M2[c] + M2[c + nc]) + M2[c + 2 * nc]) + M2[c + 3 * nc];
+            R0[c] = ((R0[c] + R0[c + nc]) + R0[c + 2 * nc]) + R0[c + 3 * nc];
+            R1[c] = ((R1[c] + R1[c + nc]) + R1[c + 2 * nc]) + R1[c + 3 * nc];
+        }
+        for (int c = 1; c <= osample; c++)
+        {
+            if (M0[c] == 0.e0 && R0[c] == 0.e0)
+                continue;
+            const int k0 = y * osample + c - lo;
+            const double m0ss = M0[c] * s * s;
+            const double m1s = M1[c] * s;
+            const double r0s = R0[c] * s;
+            /* band row k0 (first subpixel, weight d1): pairs with all */
+            double *arow = &l_Aij[(size_t)k0 * bw + 2 * osample];
+            arow[0] += M2[c];                    /* d1*d1        */
+            for (int d = 1; d < osample; d++)
+                arow[d] += m1s;                  /* d1*s         */
+            arow[osample] += m1s - M2[c];        /* d1*(s-d1)    */
+            l_bj[k0] += R1[c];
+            /* band rows k0+i (interior, weight s) */
+            for (int i = 1; i < osample; i++)
+            {
+                arow = &l_Aij[(size_t)(k0 + i) * bw + 2 * osample];
+                for (int d = 0; d < osample - i; d++)
+                    arow[d] += m0ss;             /* s*s          */
+                arow[osample - i] += m0ss - m1s; /* s*(s-d1)     */
+                l_bj[k0 + i] += r0s;
+            }
+            /* band row k0+osample (last subpixel, weight s-d1) */
+            l_Aij[(size_t)(k0 + osample) * bw + 2 * osample]
+                += m0ss - 2 * m1s + M2[c];       /* (s-d1)^2     */
+            l_bj[k0 + osample] += r0s - R1[c];
+        }
+    }
+}
+
+/* Per-row, per-class pieces of the merged slit-function value
+   v(x,y) = sum_i w_i(x) * sL[k0+i] = A(y,c) + d1col[x] * B(y,c) */
+static void flat_row_AB(int y, int osample, const double *sL,
+                        double *A, double *B)
+{
+    const double s = 1.e0 / osample;
+    for (int c = 1; c <= osample; c++)
+    {
+        const int k0 = y * osample + c;
+        double mid = 0.e0;
+        for (int i = 1; i < osample; i++)
+            mid += sL[k0 + i];
+        A[c] = s * (mid + sL[k0 + osample]);
+        B[c] = sL[k0] - sL[k0 + osample];
+    }
+}
+
+/* sP system: with all shifts zero every pixel maps to its own column, so
+   the matrix is purely diagonal (band offset 2*delta_x; delta_x can still
+   be 1 when lambda_sP > 0 forces a minimum band). */
+static void flat_fill_sP(int ncols, int nrows, int osample, int delta_x, int nx,
+                         const double *im, const unsigned char *mask,
+                         const double *sL, const int *k0col, const double *d1col,
+                         double *scratch, double *p_Aij, double *p_bj)
+{
+    double *A = scratch, *B = A + osample + 1;
+    for (int y = 0; y < nrows; y++)
+    {
+        flat_row_AB(y, osample, sL, A, B);
+        const double *imrow = im + (size_t)y * ncols;
+        const unsigned char *mrow = mask + (size_t)y * ncols;
+        for (int x = 0; x < ncols; x++)
+        {
+            if (!mrow[x])
+                continue;
+            const double v = A[k0col[x]] + d1col[x] * B[k0col[x]];
+            p_Aij[(size_t)x * nx + 2 * delta_x] += v * v;
+            p_bj[x] += imrow[x] * v;
+        }
+    }
+}
+
+static void flat_model(int ncols, int y0, int y1, int osample,
+                       const double *sP, const double *sL,
+                       const int *k0col, const double *d1col,
+                       double *scratch, double *model)
+{
+    double *A = scratch, *B = A + osample + 1;
+    for (int y = y0; y < y1; y++)
+    {
+        flat_row_AB(y, osample, sL, A, B);
+        double *mdrow = model + (size_t)y * ncols;
+        for (int x = 0; x < ncols; x++)
+            mdrow[x] = sP[x] * (A[k0col[x]] + d1col[x] * B[k0col[x]]);
+    }
+}
+
+/* Uncertainty pass: per pixel the summed weight and summed squared weight
+   of its (fixed) subpixel list, precomputed per column into swcol/sw2col. */
+static void flat_unc(int ncols, int nrows, int nx,
+                     const double *im, const double *model,
+                     const unsigned char *mask,
+                     const double *swcol, const double *sw2col,
+                     double *unc, double *p_bj, double *p_Aij)
+{
+    for (int y = 0; y < nrows; y++)
+    {
+        const double *imrow = im + (size_t)y * ncols;
+        const double *mdrow = model + (size_t)y * ncols;
+        const unsigned char *mrow = mask + (size_t)y * ncols;
+        for (int x = 0; x < ncols; x++)
+        {
+            if (!mrow[x])
+                continue;
+            const double tmp = imrow[x] - mdrow[x];
+            unc[x] += tmp * tmp * swcol[x];
+            p_bj[x] += swcol[x];
+            p_Aij[(size_t)x * nx] += sw2col[x];
+        }
+    }
+}
+
+
+/* ---------- Parallel chunk workers for the SLE fills and the model ----------
+   Each chunk accumulates into its own partial band slice (rows [lo..hi] of
+   the full matrix), allocated here and reduced + freed by the caller in
+   chunk order. The loop bodies are the same as the sequential fills in
+   slitdec(); only the accumulation target is redirected. */
+typedef struct
+{
+    int ncols, nrows, ny, osample, delta_x, nx;
+    const double *im;
+    const unsigned char *mask;
+    const double *sP, *sL;
+    const zeta_ref *zeta;
+    const int *m_zeta;
+    const zeta_rng *z_rng;
+    double *model;
+    double *slice[PAR_CHUNKS];
+    double *bslice[PAR_CHUNKS];
+    int lo[PAR_CHUNKS];
+    int hi[PAR_CHUNKS];
+    _Atomic int fail;
+    double *zwall;
+    int *zkall;
+    int zbuf;
+    /* flat fast path */
+    const int *k0col;
+    const double *d1col;
+    double *fscratch; /* PAR_CHUNKS x 5*(osample+1) */
+    /* uncertainty pass */
+    double *uslice[PAR_CHUNKS];
+    /* dev / mask-adjust pass */
+    double devsum[PAR_CHUNKS];
+    long devcnt[PAR_CHUNKS];
+    double thresh;
+    unsigned char *mask_out;
+} sle_ctx;
+
+#define CH_ZIDX(c, x, y, z) ((z) + (x) * (3 * ((c)->osample + 1)) + (size_t)(y) * (3 * ((c)->osample + 1)) * (c)->ncols)
+#define CH_MIDX(c, x, y) ((x) + (size_t)(y) * (c)->ncols)
+
+static void lfill_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, nrows = c->nrows, osample = c->osample;
+    const int bw = 4 * osample + 1;
+    const int y0 = (int)((size_t)k * nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * nrows / PAR_CHUNKS);
+    int xx, yy, m, n, iy;
+    int lo = INT_MAX, hi = INT_MIN;
+
+    c->slice[k] = c->bslice[k] = NULL;
+    for (yy = y0; yy < y1; yy++)
+        for (xx = 0; xx < ncols; xx++)
+        {
+            if (c->m_zeta[CH_MIDX(c, xx, yy)] <= 0 || !c->mask[CH_MIDX(c, xx, yy)])
+                continue;
+            const zeta_rng *zr = &c->z_rng[CH_MIDX(c, xx, yy)];
+            if (zr->min_iy < lo)
+                lo = zr->min_iy;
+            if (zr->max_iy > hi)
+                hi = zr->max_iy;
+        }
+    c->lo[k] = lo;
+    c->hi[k] = hi;
+    if (lo > hi)
+        return;
+    const int rows = hi - lo + 1;
+    double *restrict S = calloc((size_t)rows * bw, sizeof(double));
+    double *restrict B = calloc(rows, sizeof(double));
+    if (!S || !B)
+    {
+        free(S);
+        free(B);
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    c->slice[k] = S;
+    c->bslice[k] = B;
+    double *zw = c->zwall + (size_t)k * c->zbuf;
+    int *zk = c->zkall + (size_t)k * c->zbuf;
+
+    for (yy = y0; yy < y1; yy++)
+    {
+        for (xx = 0; xx < ncols; xx++)
+        {
+            const int mz = c->m_zeta[CH_MIDX(c, xx, yy)];
+            if (mz <= 0 || !c->mask[CH_MIDX(c, xx, yy)])
+                continue;
+            const zeta_ref *zrow = &c->zeta[CH_ZIDX(c, xx, yy, 0)];
+            const double imv = c->im[CH_MIDX(c, xx, yy)];
+            const zeta_rng *zr = &c->z_rng[CH_MIDX(c, xx, yy)];
+            const int k0 = zr->min_iy;
+            const int rng = zr->max_iy - k0;
+            if (rng <= 2 * osample)
+            {
+                for (n = 0; n <= rng; n++)
+                    zw[n] = 0.e0;
+                for (m = 0; m < mz; m++)
+                    zw[zrow[m].iy - k0] += c->sP[zrow[m].x] * zrow[m].w;
+                for (m = 0; m <= rng; m++)
+                {
+                    const double um = zw[m];
+                    const double *restrict uv = zw + m;
+                    double *restrict arow = S + (size_t)(k0 - lo + m) * bw + 2 * osample;
+                    const int dmax = rng - m;
+                    for (n = 0; n <= dmax; n++)
+                        arow[n] += um * uv[n];
+                    B[k0 - lo + m] += imv * um;
+                }
+                continue;
+            }
+            /* over-wide fallback, see the sequential fill */
+            int nk = 0;
+            for (m = 0; m < mz; m++)
+            {
+                const int key = zrow[m].iy;
+                const double v = c->sP[zrow[m].x] * zrow[m].w;
+                for (n = 0; n < nk; n++)
+                    if (zk[n] == key)
+                    {
+                        zw[n] += v;
+                        break;
+                    }
+                if (n == nk)
+                {
+                    zk[nk] = key;
+                    zw[nk++] = v;
+                }
+            }
+            for (m = 0; m < nk; m++)
+            {
+                iy = zk[m];
+                const double um = zw[m];
+                S[(size_t)(iy - lo) * bw + 2 * osample] += um * um;
+                for (n = m + 1; n < nk; n++)
+                {
+                    const int iyn = zk[n];
+                    const int lo2 = min(iy, iyn);
+                    const int d = abs(iyn - iy);
+                    if (d > 2 * osample)
+                        continue;
+                    S[(size_t)(lo2 - lo) * bw + d + 2 * osample] += zw[n] * um;
+                }
+                B[iy - lo] += imv * um;
             }
         }
     }
-    return 0;
+}
+
+static void pfill_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, nrows = c->nrows, osample = c->osample;
+    const int delta_x = c->delta_x, nx = c->nx;
+    const int x0 = (int)((size_t)k * ncols / PAR_CHUNKS);
+    const int x1 = (int)((size_t)(k + 1) * ncols / PAR_CHUNKS);
+    int xx, yy, m, n, x;
+    int lo = INT_MAX, hi = INT_MIN;
+
+    c->slice[k] = c->bslice[k] = NULL;
+    for (yy = 0; yy < nrows; yy++)
+        for (xx = x0; xx < x1; xx++)
+        {
+            if (c->m_zeta[CH_MIDX(c, xx, yy)] <= 0 || !c->mask[CH_MIDX(c, xx, yy)])
+                continue;
+            const zeta_rng *zr = &c->z_rng[CH_MIDX(c, xx, yy)];
+            if (zr->min_x < lo)
+                lo = zr->min_x;
+            if (zr->max_x > hi)
+                hi = zr->max_x;
+        }
+    c->lo[k] = lo;
+    c->hi[k] = hi;
+    if (lo > hi)
+        return;
+    const int rows = hi - lo + 1;
+    double *restrict S = calloc((size_t)rows * nx, sizeof(double));
+    double *restrict B = calloc(rows, sizeof(double));
+    if (!S || !B)
+    {
+        free(S);
+        free(B);
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    c->slice[k] = S;
+    c->bslice[k] = B;
+    double *zw = c->zwall + (size_t)k * c->zbuf;
+    int *zk = c->zkall + (size_t)k * c->zbuf;
+
+    for (yy = 0; yy < nrows; yy++)
+    {
+        for (xx = x0; xx < x1; xx++)
+        {
+            const int mz = c->m_zeta[CH_MIDX(c, xx, yy)];
+            if (mz <= 0 || !c->mask[CH_MIDX(c, xx, yy)])
+                continue;
+            const zeta_ref *zrow = &c->zeta[CH_ZIDX(c, xx, yy, 0)];
+            const double imv = c->im[CH_MIDX(c, xx, yy)];
+            const zeta_rng *zr = &c->z_rng[CH_MIDX(c, xx, yy)];
+            const int k0 = zr->min_x;
+            const int rng = zr->max_x - k0;
+            if (rng <= 2 * delta_x)
+            {
+                for (n = 0; n <= rng; n++)
+                    zw[n] = 0.e0;
+                for (m = 0; m < mz; m++)
+                    zw[zrow[m].x - k0] += c->sL[zrow[m].iy] * zrow[m].w;
+                for (m = 0; m <= rng; m++)
+                {
+                    const double um = zw[m];
+                    const double *restrict uv = zw + m;
+                    double *restrict arow = S + (size_t)(k0 - lo + m) * nx + 2 * delta_x;
+                    const int dmax = rng - m;
+                    for (n = 0; n <= dmax; n++)
+                        arow[n] += um * uv[n];
+                    B[k0 - lo + m] += imv * um;
+                }
+                continue;
+            }
+            /* over-wide fallback */
+            int nk = 0;
+            for (m = 0; m < mz; m++)
+            {
+                const int key = zrow[m].x;
+                const double v = c->sL[zrow[m].iy] * zrow[m].w;
+                for (n = 0; n < nk; n++)
+                    if (zk[n] == key)
+                    {
+                        zw[n] += v;
+                        break;
+                    }
+                if (n == nk)
+                {
+                    zk[nk] = key;
+                    zw[nk++] = v;
+                }
+            }
+            for (m = 0; m < nk; m++)
+            {
+                x = zk[m];
+                const double um = zw[m];
+                S[(size_t)(x - lo) * nx + 2 * delta_x] += um * um;
+                for (n = m + 1; n < nk; n++)
+                {
+                    const int xn = zk[n];
+                    const int lo2 = min(x, xn);
+                    const int d = abs(xn - x);
+                    if (d > 2 * delta_x)
+                        continue;
+                    S[(size_t)(lo2 - lo) * nx + d + 2 * delta_x] += zw[n] * um;
+                }
+                B[x - lo] += imv * um;
+            }
+        }
+    }
+}
+
+static void model_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, nrows = c->nrows;
+    const int y0 = (int)((size_t)k * nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * nrows / PAR_CHUNKS);
+    int xx, yy, m;
+    for (yy = y0; yy < y1; yy++)
+    {
+        for (xx = 0; xx < ncols; xx++)
+        {
+            const zeta_ref *zrow = &c->zeta[CH_ZIDX(c, xx, yy, 0)];
+            const int mz = c->m_zeta[CH_MIDX(c, xx, yy)];
+            double acc = 0.;
+            for (m = 0; m < mz; m++)
+                acc += c->sP[zrow[m].x] * c->sL[zrow[m].iy] * zrow[m].w;
+            c->model[CH_MIDX(c, xx, yy)] = acc;
+        }
+    }
+}
+
+/* Reduce per-chunk partial slices into the full band matrix + RHS,
+   in chunk order (deterministic), freeing the slices. */
+static void sle_reduce(sle_ctx *c, int bw, double *Aij, double *bj)
+{
+    for (int k = 0; k < PAR_CHUNKS; k++)
+    {
+        if (!c->slice[k])
+            continue;
+        const int lo = c->lo[k];
+        const int rows = c->hi[k] - lo + 1;
+        double *restrict dst = Aij + (size_t)lo * bw;
+        const double *restrict s = c->slice[k];
+        for (size_t i = 0; i < (size_t)rows * bw; i++)
+            dst[i] += s[i];
+        double *restrict db = bj + lo;
+        const double *restrict sb = c->bslice[k];
+        for (int i = 0; i < rows; i++)
+            db[i] += sb[i];
+        free(c->slice[k]);
+        free(c->bslice[k]);
+        c->slice[k] = c->bslice[k] = NULL;
+    }
+}
+
+static void sle_free_slices(sle_ctx *c)
+{
+    for (int k = 0; k < PAR_CHUNKS; k++)
+    {
+        free(c->slice[k]);
+        free(c->bslice[k]);
+        c->slice[k] = c->bslice[k] = NULL;
+    }
+}
+
+static void flat_lfill_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int osample = c->osample;
+    const int bw = 4 * osample + 1;
+    const int y0 = (int)((size_t)k * c->nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * c->nrows / PAR_CHUNKS);
+    c->slice[k] = c->bslice[k] = NULL;
+    if (y0 >= y1)
+        return;
+    /* rows y0..y1-1 write band rows y*osample + c + i, c in 1..osample,
+       i in 0..osample */
+    const int lo = y0 * osample + 1;
+    const int hi = (y1 + 1) * osample;
+    const int rows = hi - lo + 1;
+    double *S = calloc((size_t)rows * bw, sizeof(double));
+    double *B = calloc(rows, sizeof(double));
+    if (!S || !B)
+    {
+        free(S);
+        free(B);
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    c->slice[k] = S;
+    c->bslice[k] = B;
+    c->lo[k] = lo;
+    c->hi[k] = hi;
+    flat_fill_sL(c->ncols, y0, y1, osample, c->im, c->mask, c->sP,
+                 c->k0col, c->d1col, c->fscratch + (size_t)k * 20 * (osample + 1),
+                 lo, S, B);
+}
+
+static void flat_pfill_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, osample = c->osample;
+    const int y0 = (int)((size_t)k * c->nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * c->nrows / PAR_CHUNKS);
+    c->slice[k] = c->bslice[k] = NULL;
+    if (y0 >= y1)
+        return;
+    double *D = calloc(ncols, sizeof(double));
+    double *B = calloc(ncols, sizeof(double));
+    if (!D || !B)
+    {
+        free(D);
+        free(B);
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    c->slice[k] = D;
+    c->bslice[k] = B;
+    double *ab = c->fscratch + (size_t)k * 20 * (osample + 1);
+    double *A = ab, *Bc = ab + osample + 1;
+    for (int y = y0; y < y1; y++)
+    {
+        flat_row_AB(y, osample, c->sL, A, Bc);
+        const double *imrow = c->im + (size_t)y * ncols;
+        const unsigned char *mrow = c->mask + (size_t)y * ncols;
+        for (int x = 0; x < ncols; x++)
+        {
+            if (!mrow[x])
+                continue;
+            const double v = A[c->k0col[x]] + c->d1col[x] * Bc[c->k0col[x]];
+            D[x] += v * v;
+            B[x] += imrow[x] * v;
+        }
+    }
+}
+
+static void flat_model_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int y0 = (int)((size_t)k * c->nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * c->nrows / PAR_CHUNKS);
+    if (y0 >= y1)
+        return;
+    flat_model(c->ncols, y0, y1, c->osample, c->sP, c->sL, c->k0col, c->d1col,
+               c->fscratch + (size_t)k * 20 * (c->osample + 1), c->model);
+}
+
+/* Residual RMS accumulation (dev) and the mask threshold pass, both over
+   x in [delta_x, ncols - delta_x). Partial sums per chunk, reduced in
+   chunk order. */
+static void dev_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, delta_x = c->delta_x;
+    const int y0 = (int)((size_t)k * c->nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * c->nrows / PAR_CHUNKS);
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    long cnt = 0;
+    for (int y = y0; y < y1; y++)
+    {
+        const double *imrow = c->im + (size_t)y * ncols;
+        const double *mdrow = c->model + (size_t)y * ncols;
+        const unsigned char *mrow = c->mask + (size_t)y * ncols;
+        /* four partial sums break the dependency chain (rounding-level) */
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (int x = delta_x; x < ncols - delta_x; x++)
+        {
+            if (mrow[x])
+            {
+                const double resid = mdrow[x] - imrow[x];
+                const double r2 = resid * resid;
+                switch (x & 3)
+                {
+                case 0: t0 += r2; break;
+                case 1: t1 += r2; break;
+                case 2: t2 += r2; break;
+                default: t3 += r2; break;
+                }
+                cnt++;
+            }
+        }
+        s0 += t0;
+        s1 += t1;
+        s2 += t2;
+        s3 += t3;
+    }
+    c->devsum[k] = ((s0 + s1) + s2) + s3;
+    c->devcnt[k] = cnt;
+}
+
+/* Uncertainty accumulation (general path): per-chunk partial sums of
+   residual^2 * w, w, and w^2 per source column. */
+static void unc_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, nrows = c->nrows;
+    const int y0 = (int)((size_t)k * nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * nrows / PAR_CHUNKS);
+    int x, y, m;
+    c->uslice[k] = NULL;
+    if (y0 >= y1)
+        return;
+    double *U = calloc((size_t)3 * ncols, sizeof(double));
+    if (!U)
+    {
+        atomic_store(&c->fail, 1);
+        return;
+    }
+    c->uslice[k] = U;
+    double *restrict us = U, *restrict pb = U + ncols, *restrict pa = U + 2 * ncols;
+    for (y = y0; y < y1; y++)
+    {
+        for (x = 0; x < ncols; x++)
+        {
+            const size_t i = x + (size_t)y * ncols;
+            if (!c->mask[i])
+                continue;
+            const zeta_ref *zrow = &c->zeta[CH_ZIDX(c, x, y, 0)];
+            const int mz = c->m_zeta[i];
+            const double tmp = c->im[i] - c->model[i];
+            for (m = 0; m < mz; m++)
+            {
+                const int xx = zrow[m].x;
+                const double ww = zrow[m].w;
+                us[xx] += tmp * tmp * ww;
+                pb[xx] += ww;
+                pa[xx] += ww * ww;
+            }
+        }
+    }
+}
+
+static void maskadj_chunk(void *p, int k)
+{
+    sle_ctx *c = p;
+    const int ncols = c->ncols, delta_x = c->delta_x;
+    const int y0 = (int)((size_t)k * c->nrows / PAR_CHUNKS);
+    const int y1 = (int)((size_t)(k + 1) * c->nrows / PAR_CHUNKS);
+    const double thresh = c->thresh;
+    for (int y = y0; y < y1; y++)
+    {
+        const double *imrow = c->im + (size_t)y * ncols;
+        const double *mdrow = c->model + (size_t)y * ncols;
+        unsigned char *mrow = c->mask_out + (size_t)y * ncols;
+        for (int x = delta_x; x < ncols - delta_x; x++)
+            mrow[x] = fabs(mdrow[x] - imrow[x]) < thresh;
+    }
 }
 
 int slitdec(        int ncols,
@@ -739,9 +1744,20 @@ int slitdec(        int ncols,
     int *zk;
 
     // For the geometry
-    zeta_ref *zeta;
-    int *m_zeta;
-    zeta_rng *z_rng;
+    zeta_ref *zeta = NULL;
+    int *m_zeta = NULL;
+    zeta_rng *z_rng = NULL;
+
+    // Flat-geometry fast path (see the flat_* helpers above)
+    int fast_flat;
+    int *k0col = NULL;
+    double *d1col = NULL, *flat_scratch = NULL, *swcol = NULL, *sw2col = NULL;
+
+    // Parallel fills (see the chunk workers above)
+    const int nthreads = par_nthreads(ncols, nrows);
+    pool_t *pool = NULL;
+    sle_ctx pc;
+    memset(&pc, 0, sizeof pc);
 
     // The Optimization results
     double success, status;
@@ -767,6 +1783,13 @@ int slitdec(        int ncols,
     delta_x = lambda_sP == 0 ? 0 : 1;
     for (x = 0; x < ncols; x++)
     {
+        /* all-zero polynomial contributes ceil(0) = 0: skip the row scan */
+        if (slitcurve[curve_index(x, 1)] == 0.e0 &&
+            slitcurve[curve_index(x, 2)] == 0.e0 &&
+            slitcurve[curve_index(x, 3)] == 0.e0 &&
+            slitcurve[curve_index(x, 4)] == 0.e0 &&
+            slitcurve[curve_index(x, 5)] == 0.e0)
+            continue;
         for (y = -y_lower_lim; y < nrows - y_lower_lim + 1; y++)
         {
             double y2 = y * y;
@@ -807,6 +1830,26 @@ int slitdec(        int ncols,
         return -1;
     }
 
+    /* The fast path applies when the geometry is exactly flat: all
+       curvature coefficients and all slitdeltas are 0.0, so every
+       subpixel shift is exactly zero. (delta_x can still be 1 when
+       lambda_sP > 0 forces a minimum band width.) */
+    fast_flat = 1;
+    for (x = 0; x < ncols && fast_flat; x++)
+        for (m = 1; m < 6; m++)
+            if (slitcurve[curve_index(x, m)] != 0.e0)
+            {
+                fast_flat = 0;
+                break;
+            }
+    if (fast_flat)
+        for (iy = 0; iy < ny; iy++)
+            if (slitdeltas[iy] != 0.e0)
+            {
+                fast_flat = 0;
+                break;
+            }
+
     l_Aij = malloc(MAX_LAIJ * sizeof(double));
     p_Aij = malloc(MAX_PAIJ * sizeof(double));
     l_bj = malloc(MAX_LBJ * sizeof(double));
@@ -817,9 +1860,37 @@ int slitdec(        int ncols,
     int zbuf = max(MAX_ZETA_Z, nx);
     zw = malloc(zbuf * sizeof(double));
     zk = malloc(zbuf * sizeof(int));
-    zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
-    m_zeta = malloc(MAX_MZETA * sizeof(int));
-    z_rng = malloc(MAX_MZETA * sizeof(zeta_rng));
+    if (fast_flat)
+    {
+        k0col = malloc(ncols * sizeof(int));
+        d1col = malloc(ncols * sizeof(double));
+        swcol = malloc(ncols * sizeof(double));
+        sw2col = malloc(ncols * sizeof(double));
+        flat_scratch = malloc(20 * (osample + 1) * sizeof(double));
+        if (nthreads > 1)
+            pc.fscratch = malloc((size_t)PAR_CHUNKS * 20 * (osample + 1) * sizeof(double));
+    }
+    else
+    {
+        zeta = malloc(MAX_ZETA * sizeof(zeta_ref));
+        m_zeta = malloc(MAX_MZETA * sizeof(int));
+        z_rng = malloc(MAX_MZETA * sizeof(zeta_rng));
+        if (nthreads > 1)
+        {
+            pc.zwall = malloc((size_t)PAR_CHUNKS * zbuf * sizeof(double));
+            pc.zkall = malloc((size_t)PAR_CHUNKS * zbuf * sizeof(int));
+        }
+    }
+    pc.ncols = ncols;
+    pc.nrows = nrows;
+    pc.ny = ny;
+    pc.osample = osample;
+    pc.delta_x = delta_x;
+    pc.nx = nx;
+    pc.im = im;
+    pc.zbuf = zbuf;
+    if (nthreads > 1)
+        pool = pool_start(nthreads);
     ycen_offset = malloc(ncols * sizeof(int));
     sP_old = malloc(ncols * sizeof(double));
     sP_diff = malloc(ncols * sizeof(double));
@@ -831,7 +1902,12 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
-    zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
+    if (fast_flat)
+        flat_setup(ncols, osample, ycen, k0col, d1col);
+    else if (nthreads > 1)
+        zeta_tensors_par(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng, delta_x, pool);
+    else
+        zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
 
     /* Preset slit function: the caller supplies sL and we skip solving for
        it. Normalize the preset once here (to sum osample) so callers do not
@@ -867,9 +1943,63 @@ int slitdec(        int ncols,
            sequentially and skips masked pixels entirely. Accumulation order
            differs from the historic xi-centric loop only at the rounding
            level. */
-        for (xx = 0; xx < ncols; xx++)
+        if (fast_flat && nthreads > 1)
         {
-            for (yy = 0; yy < nrows; yy++)
+            pc.mask = mask;
+            pc.sP = sP;
+            pc.k0col = k0col;
+            pc.d1col = d1col;
+            atomic_store(&pc.fail, 0);
+            pool_run(pool, flat_lfill_chunk, &pc, PAR_CHUNKS);
+            if (atomic_load(&pc.fail))
+            {
+                sle_free_slices(&pc);
+                for (iy = 0; iy < MAX_LBJ; iy++)
+                    l_bj[lbj_index(iy)] = 0.e0;
+                for (iy = 0; iy < MAX_LAIJ; iy++)
+                    l_Aij[iy] = 0;
+                flat_fill_sL(ncols, 0, nrows, osample, im, mask, sP, k0col, d1col,
+                             flat_scratch, 0, l_Aij, l_bj);
+            }
+            else
+                sle_reduce(&pc, 4 * osample + 1, l_Aij, l_bj);
+        }
+        else if (fast_flat)
+            flat_fill_sL(ncols, 0, nrows, osample, im, mask, sP, k0col, d1col,
+                         flat_scratch, 0, l_Aij, l_bj);
+        else if (nthreads > 1)
+        {
+            pc.mask = mask;
+            pc.sP = sP;
+            pc.sL = sL;
+            pc.zeta = zeta;
+            pc.m_zeta = m_zeta;
+            pc.z_rng = z_rng;
+            atomic_store(&pc.fail, 0);
+            pool_run(pool, lfill_chunk, &pc, PAR_CHUNKS);
+            if (atomic_load(&pc.fail))
+            {
+                /* allocation failure in a chunk: redo sequentially */
+                sle_free_slices(&pc);
+                for (iy = 0; iy < MAX_LBJ; iy++)
+                    l_bj[lbj_index(iy)] = 0.e0;
+                for (iy = 0; iy < MAX_LAIJ; iy++)
+                    l_Aij[iy] = 0;
+                goto lfill_sequential;
+            }
+            sle_reduce(&pc, 4 * osample + 1, l_Aij, l_bj);
+        }
+        else
+        lfill_sequential:
+        /* Row-outer fill: the band rows touched by one detector row span
+           only ~2*osample rows of l_Aij, which then stay L1-resident for
+           the whole row sweep; iterated column-outer the walk swept the
+           entire band matrix once per column (measured ~6x slower on the
+           pair loop). zeta is y-major, so this order also reads it
+           sequentially. */
+        for (yy = 0; yy < nrows; yy++)
+        {
+            for (xx = 0; xx < ncols; xx++)
             {
                 const int mz = m_zeta[mzeta_index(xx, yy)];
                 if (mz <= 0 || !mask[im_index(xx, yy)])
@@ -1020,9 +2150,73 @@ int slitdec(        int ncols,
             p_Aij[x] = 0;
 
         /* Pixel-centric fill, see comment at the slit function SLE above */
-        for (xx = 0; xx < ncols; xx++)
+        if (fast_flat && nthreads > 1)
         {
-            for (yy = 0; yy < nrows; yy++)
+            pc.mask = mask;
+            pc.sL = sL;
+            pc.k0col = k0col;
+            pc.d1col = d1col;
+            atomic_store(&pc.fail, 0);
+            pool_run(pool, flat_pfill_chunk, &pc, PAR_CHUNKS);
+            if (atomic_load(&pc.fail))
+            {
+                sle_free_slices(&pc);
+                for (x = 0; x < MAX_PBJ; x++)
+                    p_bj[pbj_index(x)] = 0;
+                for (x = 0; x < MAX_PAIJ; x++)
+                    p_Aij[x] = 0;
+                flat_fill_sP(ncols, nrows, osample, delta_x, nx, im, mask, sL,
+                             k0col, d1col, flat_scratch, p_Aij, p_bj);
+            }
+            else
+            {
+                for (m = 0; m < PAR_CHUNKS; m++)
+                {
+                    if (!pc.slice[m])
+                        continue;
+                    for (x = 0; x < ncols; x++)
+                    {
+                        p_Aij[paij_index(x, 2 * delta_x)] += pc.slice[m][x];
+                        p_bj[pbj_index(x)] += pc.bslice[m][x];
+                    }
+                    free(pc.slice[m]);
+                    free(pc.bslice[m]);
+                    pc.slice[m] = pc.bslice[m] = NULL;
+                }
+            }
+        }
+        else if (fast_flat)
+            flat_fill_sP(ncols, nrows, osample, delta_x, nx, im, mask, sL,
+                         k0col, d1col, flat_scratch, p_Aij, p_bj);
+        else if (nthreads > 1)
+        {
+            pc.mask = mask;
+            pc.sP = sP;
+            pc.sL = sL;
+            pc.zeta = zeta;
+            pc.m_zeta = m_zeta;
+            pc.z_rng = z_rng;
+            atomic_store(&pc.fail, 0);
+            pool_run(pool, pfill_chunk, &pc, PAR_CHUNKS);
+            if (atomic_load(&pc.fail))
+            {
+                sle_free_slices(&pc);
+                for (x = 0; x < MAX_PBJ; x++)
+                    p_bj[pbj_index(x)] = 0;
+                for (x = 0; x < MAX_PAIJ; x++)
+                    p_Aij[x] = 0;
+                goto pfill_sequential;
+            }
+            sle_reduce(&pc, nx, p_Aij, p_bj);
+        }
+        else
+        pfill_sequential:
+        /* Row-outer fill, see the sL fill above. For this system the band
+           rows are keyed by source column (near xx), so the row sweep also
+           walks p_Aij near-sequentially. */
+        for (yy = 0; yy < nrows; yy++)
+        {
+            for (xx = 0; xx < ncols; xx++)
             {
                 const int mz = m_zeta[mzeta_index(xx, yy)];
                 if (mz <= 0 || !mask[im_index(xx, yy)])
@@ -1160,11 +2354,34 @@ int slitdec(        int ncols,
         sP_med = fabs(quick_select_median(sP_diff, ncols));
 
         /* Compute the model.
-           x is the outer loop so that the zeta tensor, by far the largest
-           array, is read sequentially instead of with a large stride */
-        for (x = 0; x < ncols; x++)
+           y is the outer loop so that the zeta tensor (y-major, by far the
+           largest array) is read sequentially, and model is written
+           sequentially */
+        if (fast_flat && nthreads > 1)
         {
-            for (y = 0; y < nrows; y++)
+            pc.sP = sP;
+            pc.sL = sL;
+            pc.k0col = k0col;
+            pc.d1col = d1col;
+            pc.model = model;
+            pool_run(pool, flat_model_chunk, &pc, PAR_CHUNKS);
+        }
+        else if (fast_flat)
+            flat_model(ncols, 0, nrows, osample, sP, sL, k0col, d1col,
+                       flat_scratch, model);
+        else if (nthreads > 1)
+        {
+            pc.sP = sP;
+            pc.sL = sL;
+            pc.zeta = zeta;
+            pc.m_zeta = m_zeta;
+            pc.model = model;
+            pool_run(pool, model_chunk, &pc, PAR_CHUNKS);
+        }
+        else
+        for (y = 0; y < nrows; y++)
+        {
+            for (x = 0; x < ncols; x++)
             {
                 const zeta_ref *zrow = &zeta[zeta_index(x, y, 0)];
                 const int mz = m_zeta[mzeta_index(x, y)];
@@ -1203,17 +2420,33 @@ int slitdec(        int ncols,
         // the range that covers 99% of the data.
         // Since that is much more complicated we just use the MAD.
         /* Compute sigma for outlier rejection (RMS of residuals) */
-        tmp = 0;
-        isum = 0;
-        for (y = 0; y < nrows; y++)
+        if (nthreads > 1)
         {
-            for (x = delta_x; x < ncols - delta_x; x++)
+            pc.mask = mask;
+            pc.model = model;
+            pool_run(pool, dev_chunk, &pc, PAR_CHUNKS);
+            tmp = 0;
+            isum = 0;
+            for (m = 0; m < PAR_CHUNKS; m++)
             {
-                if (mask[im_index(x, y)])
+                tmp += pc.devsum[m];
+                isum += pc.devcnt[m];
+            }
+        }
+        else
+        {
+            tmp = 0;
+            isum = 0;
+            for (y = 0; y < nrows; y++)
+            {
+                for (x = delta_x; x < ncols - delta_x; x++)
                 {
-                    double resid = model[im_index(x, y)] - im[im_index(x, y)];
-                    tmp += resid * resid;
-                    isum++;
+                    if (mask[im_index(x, y)])
+                    {
+                        double resid = model[im_index(x, y)] - im[im_index(x, y)];
+                        tmp += resid * resid;
+                        isum++;
+                    }
                 }
             }
         }
@@ -1222,6 +2455,14 @@ int slitdec(        int ncols,
         /* Adjust the mask marking outliers */
         if (kappa > 0)
         {
+            if (nthreads > 1)
+            {
+                pc.model = model;
+                pc.thresh = kappa * dev;
+                pc.mask_out = mask;
+                pool_run(pool, maskadj_chunk, &pc, PAR_CHUNKS);
+            }
+            else
             for (y = 0; y < nrows; y++)
             {
                 for (x = delta_x; x < ncols - delta_x; x++)
@@ -1271,23 +2512,78 @@ int slitdec(        int ncols,
         p_Aij[paij_index(x, 0)] = 0;
     }
 
+    if (fast_flat)
+    {
+        /* Summed (and summed squared) subpixel weights per column:
+           accumulated in the same subpixel order as the zeta list */
+        const double s = 1.e0 / osample;
+        for (x = 0; x < ncols; x++)
+        {
+            double sw = d1col[x], sw2 = d1col[x] * d1col[x];
+            for (m = 1; m < osample; m++)
+            {
+                sw += s;
+                sw2 += s * s;
+            }
+            sw += s - d1col[x];
+            sw2 += (s - d1col[x]) * (s - d1col[x]);
+            swcol[x] = sw;
+            sw2col[x] = sw2;
+        }
+        flat_unc(ncols, nrows, nx, im, model, mask, swcol, sw2col,
+                 unc, p_bj, p_Aij);
+    }
+    else if (nthreads > 1)
+    {
+        int uk;
+        pc.mask = mask;
+        pc.model = model;
+        atomic_store(&pc.fail, 0);
+        pool_run(pool, unc_chunk, &pc, PAR_CHUNKS);
+        if (atomic_load(&pc.fail))
+        {
+            for (uk = 0; uk < PAR_CHUNKS; uk++)
+            {
+                free(pc.uslice[uk]);
+                pc.uslice[uk] = NULL;
+            }
+            goto unc_sequential;
+        }
+        for (uk = 0; uk < PAR_CHUNKS; uk++)
+        {
+            if (!pc.uslice[uk])
+                continue;
+            const double *U = pc.uslice[uk];
+            for (x = 0; x < ncols; x++)
+            {
+                unc[sp_index(x)] += U[x];
+                p_bj[pbj_index(x)] += U[ncols + x];
+                p_Aij[paij_index(x, 0)] += U[2 * ncols + x];
+            }
+            free(pc.uslice[uk]);
+            pc.uslice[uk] = NULL;
+        }
+    }
+    else
+    unc_sequential:
+    /* y is the outer loop so zeta (y-major) is read sequentially */
     for (y = 0; y < nrows; y++)
     {
         for (x = 0; x < ncols; x++)
         {
-            for (m = 0; m < m_zeta[mzeta_index(x, y)]; m++) // Loop through all pixels contributing to x,y
+            if (!mask[im_index(x, y)])
+                continue;
+            const zeta_ref *zrow = &zeta[zeta_index(x, y, 0)];
+            const int mz = m_zeta[mzeta_index(x, y)];
+            // Should pix_unc contribute here?
+            tmp = im[im_index(x, y)] - model[im_index(x, y)];
+            for (m = 0; m < mz; m++)
             {
-                if (mask[im_index(x, y)])
-                {
-                    // Should pix_unc contribute here?
-                    xx = zeta[zeta_index(x, y, m)].x;
-                    iy = zeta[zeta_index(x, y, m)].iy;
-                    ww = zeta[zeta_index(x, y, m)].w;
-                    tmp = im[im_index(x, y)] - model[im_index(x, y)];
-                    unc[sp_index(xx)] += tmp * tmp * ww;
-                    p_bj[pbj_index(xx)] += ww;           // Norm
-                    p_Aij[paij_index(xx, 0)] += ww * ww; // Norm squared
-                }
+                xx = zrow[m].x;
+                ww = zrow[m].w;
+                unc[sp_index(xx)] += tmp * tmp * ww;
+                p_bj[pbj_index(xx)] += ww;           // Norm
+                p_Aij[paij_index(xx, 0)] += ww * ww; // Norm squared
             }
         }
     }
@@ -1326,10 +2622,20 @@ int slitdec(        int ncols,
     free(l_bj);
     free(zw);
     free(zk);
+    pool_stop(pool);
+    free(pc.zwall);
+    free(pc.zkall);
+    free(pc.fscratch);
 
     free(zeta);
     free(m_zeta);
     free(z_rng);
+    free(ycen_offset);
+    free(k0col);
+    free(d1col);
+    free(swcol);
+    free(sw2col);
+    free(flat_scratch);
 
     info[0] = success;
     info[1] = sP_change;

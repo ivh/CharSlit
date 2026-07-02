@@ -27,6 +27,74 @@ Output is preserved within the regression tolerance (golden references
 unchanged; the only differences are at the rounding level from reordered
 accumulation). See "What was changed", Round 2 below.
 
+### Round 3: flat fast path, y-major zeta, multithreading (July 2026)
+
+Benchmark totals (`uv run python bench.py 5`, best-of-5, M4 Pro):
+
+| File | Round 2 (7540af6) | Round 3 | speedup |
+|---|---|---|---|
+| CRIRES_UNE_J (2048x2048) | 8723 ms | 82 ms | 106x |
+| CRIRES1 (176x2048) | 413 ms | 70 ms | 5.9x |
+| CRIRES2 (176x2048) | 421 ms | 71 ms | 5.9x |
+| ANDES_R_FP1 (404x2556) | 425 ms | 67 ms | 6.3x |
+| Hsim / Rsim / sims | 1.3-4.3 ms | 0.5-2.9 ms | 2-7x |
+| TOTAL | 9998 ms | 295 ms | 34x |
+
+Three independent changes:
+
+1. **Flat-geometry fast path.** When every curvature coefficient and every
+   slitdelta is exactly 0.0, pixel (x,y) receives exactly the osample+1
+   subpixels of its own column with a fixed per-column weight vector
+   (d1, step, ..., step, step-d1). The SLE fills, model and uncertainty
+   pass are then computed directly from ycen (the sL fill collapses to 5
+   moments per row and k0-class, quadratic in d1), and the zeta tensor is
+   neither built nor allocated (1.4 GB for the 2048x2048 frame). This is
+   the `flat_*` helper family, gated by an exact zero test of the inputs.
+
+2. **y-major zeta + row-outer fills.** The zeta tensor layout switched
+   from x-major to y-major, and the SLE fills, model and uncertainty pass
+   iterate detector rows outermost. zeta still streams sequentially, and
+   the band rows of `l_Aij` touched by one detector row stay
+   cache-resident for the whole row sweep (column-outer, every column
+   walk swept the entire band matrix). `zeta_tensors` keeps its per-column
+   recurrences (iy1/iy2/dy) in state arrays and executes the identical
+   per-column operation sequence, so all inserted values are bit-identical;
+   only the order of entries within one pixel's list changes.
+
+3. **Multithreading (pthreads).** The two SLE fills, the model, the
+   dev/mask pass, the uncertainty pass and the zeta build run on a small
+   persistent worker pool (created once per slitdec call). Design rules:
+   - Work is split into a fixed number of chunks (PAR_CHUNKS = 32,
+     independent of thread count); each chunk accumulates into its own
+     partial band slice, reduced in chunk order. Results are identical
+     for any thread count >= 2 (and within the golden tolerance of the
+     sequential path, which small images and CHARSLIT_THREADS=1 use).
+   - The sL fill chunks rows, the sP fill chunks columns - each keeps its
+     partial band slice narrow.
+   - The zeta build chunks columns with a halo of 2*delta_x+2 source
+     columns: every pixel's zeta list is written by exactly one chunk in
+     the exact sequential order, so the built tensor is bit-identical to
+     the sequential build.
+   - Thread count: `CHARSLIT_THREADS` env var; default min(12, cores);
+     images under ~100k pixels stay sequential.
+
+Also in this round: the uncertainty pass loop order fixed (was striding
+zeta), the delta_x scan skips all-zero polynomial columns, and the flat
+moment loop and dev sum use 4-way interleaved accumulators to break
+dependency chains.
+
+Verified: golden regression tests (rtol 1e-10, masks exact) pass at 1, 2,
+5, and 12 threads against sequentially-generated references; ASan, UBSan
+and TSan are clean on both the curved and flat paths at 1-12 threads;
+spectrum checksums are identical across thread counts.
+
+A false lead worth remembering: two attempts to fix the fills by
+separating the merge and pair phases (per-column buffers, then a
+full-image window buffer) changed nothing or made things worse - and
+early "10x" experiment numbers turned out to be garbage-math runs exiting
+the convergence loop after 2 of 21 iterations. Always compare `iters` and
+a checksum, not just phase timings.
+
 ## Correctness guarantees
 
 Before touching the C code, golden-reference regression tests were added

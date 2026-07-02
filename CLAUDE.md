@@ -270,17 +270,21 @@ if (x + ix1 >= 0 && x + ix2 < ncols) {
 
 So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is added to the total shift from the curve polynomial.
 
-## Performance: zeta tensor and SLE fills
+## Performance: zeta tensor, SLE fills, threading
 
-`slitdec` was optimized in two rounds (full rationale and benchmarks in
-`speed.md`). The current structure future sessions should know about:
+`slitdec` was optimized in three rounds (full rationale and benchmarks in
+`speed.md`; Round 3 brought the bench total from ~10 s to ~0.3 s). The
+current structure future sessions should know about:
 
-- **zeta only, pixel-centric fills.** The geometry is a single `zeta`
-  tensor (subpixels contributing to each detector pixel); the old inverse
-  `xi` tensor is gone. Both SLE matrices (`l_Aij` for sL, `p_Aij` for sP)
-  are filled by iterating over detector pixels and summing pairs of that
-  pixel's zeta entries into the symmetric upper band, mirrored once at the
-  end. Band matrices are row-major (`(row)*band_width + (col)`).
+- **zeta only, pixel-centric fills, y-major.** The geometry is a single
+  `zeta` tensor (subpixels contributing to each detector pixel), stored
+  y-major: one detector row's per-pixel lists are contiguous. The SLE
+  fills, the model and the uncertainty pass iterate detector rows
+  outermost — zeta streams sequentially AND the touched band rows of
+  `l_Aij` stay cache-resident across a row sweep. Both SLE matrices
+  (`l_Aij` for sL, `p_Aij` for sP) are filled by summing pairs of each
+  pixel's zeta entries into the symmetric upper band, mirrored once at
+  the end. Band matrices are row-major (`(row)*band_width + (col)`).
 - **Dense-window merge (`zeta_rng`).** `zeta_tensors`/`zeta_add` maintain a
   per-pixel `zeta_rng` (min/max of `iy` and of `x`). The fills merge a
   pixel's entries by scattering into a dense window `zw[key - k0]` instead
@@ -291,7 +295,20 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
   (`3*(osample+1)`) is too small for the spectrum window when `delta_x` is
   large — this is the same class of bug as the `delta_x` allocation issue
   above. If you change either window's width, recheck this allocation.
-- **Model pass** iterates `x` outermost so `zeta` is read sequentially.
+- **Flat-geometry fast path.** When all curvature coefficients and all
+  slitdeltas are exactly 0.0, the `flat_*` helpers compute the fills,
+  model and uncertainties directly from ycen and the zeta tensor is never
+  built or allocated. Gated by an exact zero test; ~100x on the 2048x2048
+  no-curvature frame.
+- **Multithreading.** The fills, model, dev/mask, uncertainty and zeta
+  build run on a per-call pthread pool (`CHARSLIT_THREADS` env var,
+  default min(12, cores), sequential below ~100k pixels). Work is split
+  into PAR_CHUNKS=32 fixed chunks with per-chunk partial band slices
+  reduced in chunk order, so results are independent of the thread count;
+  the parallel zeta build (column chunks + halo, exclusive target-column
+  ownership) is bit-identical to the sequential build. If you add a new
+  accumulation pass, follow the same pattern — never accumulate into
+  shared arrays from multiple chunks directly.
 - **Safety guards (July 2026).** `zeta_add` drops entries once a pixel's
   zeta list is full (`MAX_ZETA_Z = 3*(osample+1)`; real data already reaches
   18 of 21 slots), and the unique-key fallback fills drop pairs whose key
