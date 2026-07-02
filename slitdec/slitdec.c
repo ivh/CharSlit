@@ -427,6 +427,11 @@ static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
     if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
     {
         const int m = m_zeta[mzeta_index(xx, yy)];
+        /* Extreme geometry can feed one pixel from more subpixels than the
+           fixed per-pixel list holds; drop the entry rather than overflow
+           into the next pixel's list. Real data reaches ~18 of 21 slots. */
+        if (m >= MAX_ZETA_Z)
+            return;
         zeta_rng *zr = &z_rng[mzeta_index(xx, yy)];
         zeta[zeta_index(xx, yy, m)].x = x;
         zeta[zeta_index(xx, yy, m)].iy = iy;
@@ -686,16 +691,17 @@ int slitdec(        int ncols,
     im : double array of shape (nrows, ncols)
         Image to be decomposed
     pix_unc : double array of shape (nrows, ncols)
-        Individual pixel uncertainties. Set to zero if unknown.
+        Individual pixel uncertainties. Currently unused: the output
+        uncertainties are estimated from the data - model residuals.
     mask : byte array of shape (nrows, ncols)
         Initial and final mask for the swath, both in and output
     ycen : double array of shape (ncols,)
         Order centre line offset from pixel row boundary.
         Should only contain values between 0 and 1.
-    slitcurve : double array of shape (ncols, 3)
-        Slit curvature parameters for each point along the spectrum
-    slitdeltas : double array of shape (nrows, ncols)
-        Slit deltas for each point along the slit
+    slitcurve : double array of shape (ncols, 6)
+        Slit curvature polynomial coefficients c0..c5 for each column
+    slitdeltas : double array of shape (ny,)
+        Additional per-subpixel horizontal offsets
     osample : int
         Subpixel ovsersampling factor
     lambda_sP : double
@@ -932,6 +938,11 @@ int slitdec(        int ncols,
                         const int iyn = zk[n];
                         const int lo = min(iy, iyn);
                         const int d = abs(iyn - iy);
+                        /* Pairs beyond the band cannot be represented by the
+                           band matrix; storing them would write into the next
+                           row's band (or past the array). Drop them. */
+                        if (d > 2 * osample)
+                            continue;
                         l_Aij[laij_index(lo, d + 2 * osample)] += zw[n] * um;
                     }
                     l_bj[lbj_index(iy)] += imv * um;
@@ -1075,6 +1086,9 @@ int slitdec(        int ncols,
                         const int xn = zk[n];
                         const int lo = min(x, xn);
                         const int d = abs(xn - x);
+                        /* See the sL fallback: out-of-band pairs are dropped */
+                        if (d > 2 * delta_x)
+                            continue;
                         p_Aij[paij_index(lo, d + 2 * delta_x)] += zw[n] * um;
                     }
                     p_bj[pbj_index(x)] += imv * um;
@@ -1166,6 +1180,17 @@ int slitdec(        int ncols,
             }
         }
 
+        /* With a preset sL and no outlier rejection the sP solve does not
+           depend on the previous iteration: one pass is exact. sP_change
+           still holds the jump from the initial guess, which says nothing
+           about convergence here, so report 0. */
+        if (use_preset && kappa <= 0)
+        {
+            sP_change = 0;
+            iter = 1;
+            break;
+        }
+
         /* Compare model and data */
         // We use the Median absolute derivation to estimate the distribution
         // The MAD is more robust than the usual STD as it uses the median
@@ -1218,13 +1243,24 @@ int slitdec(        int ncols,
            maxiter is an unconditional upper bound. */
     } while ((iter++ == 0) || ((iter <= maxiter) && (sP_change > sP_stop * sP_med)));
 
-    if (iter >= maxiter)
+    /* The loop exits with iter == maxiter + 1 only when the convergence test
+       never passed; converging exactly at iter == maxiter is a success. */
+    if (iter > maxiter)
     {
         status = -1; // ran out of iterations
         success = 0;
     }
     else
         status = 1; // converged
+
+    /* A non-finite spectrum (e.g. unmasked NaN pixels with kappa == 0) must
+       not be reported as success. The convergence test cannot catch it: NaN
+       compares false and exits the loop as if converged. */
+    if (!isfinite(sP_change))
+    {
+        status = -3; // non-finite result
+        success = 0;
+    }
 
     /* Uncertainty estimate */
 
@@ -1269,6 +1305,17 @@ int slitdec(        int ncols,
     for (x = ncols - delta_x; x < ncols; x++)
     {
         sP[sp_index(x)] = unc[sp_index(x)] = 0;
+    }
+
+    /* Scanned after the edge zeroing so the flag reflects the returned data */
+    for (x = 0; x < ncols; x++)
+    {
+        if (!isfinite(sP[sp_index(x)]))
+        {
+            status = -3; // non-finite result
+            success = 0;
+            break;
+        }
     }
 
     free(sP_old);

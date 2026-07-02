@@ -98,10 +98,12 @@ nb::dict slitdec_wrapper(
     size_t unc_shape[1] = {static_cast<size_t>(ncols)};
     size_t info_shape[1] = {5};
 
+    // Value-initialized so early failure returns (e.g. excessive curvature)
+    // hand zeros to Python instead of uninitialized memory
     double* sP = new double[ncols];
     double* sL = new double[ny];
-    double* model = new double[nrows * ncols];
-    double* unc = new double[ncols];
+    double* model = new double[nrows * ncols]();
+    double* unc = new double[ncols]();
     double* info = new double[5];
 
     // Initialize sP with ones (starting guess)
@@ -205,6 +207,9 @@ nb::dict slitdec_wrapper(
         delete[] slitcurve_padded;
     }
 
+    // ycen_copy is not returned to Python, unlike mask_copy
+    delete[] ycen_copy;
+
     // Create nanobind arrays that own the data
     nb::capsule sP_owner(sP, [](void *p) noexcept { delete[] (double *) p; });
     nb::capsule sL_owner(sL, [](void *p) noexcept { delete[] (double *) p; });
@@ -259,7 +264,8 @@ NB_MODULE(charslit, m) {
           "im : ndarray (nrows, ncols)\n"
           "    Main input image to be decomposed\n"
           "pix_unc : ndarray (nrows, ncols)\n"
-          "    Pixel error map\n"
+          "    Pixel error map. Currently unused by the algorithm; output\n"
+          "    uncertainties are estimated from the data - model residuals.\n"
           "mask : ndarray (nrows, ncols), uint8\n"
           "    Pixel mask (will be modified by the algorithm)\n"
           "ycen : ndarray (ncols,)\n"
@@ -274,7 +280,7 @@ NB_MODULE(charslit, m) {
           "lambda_sP : float, optional\n"
           "    Smoothing parameter for spectrum (default: 0.0)\n"
           "lambda_sL : float, optional\n"
-          "    Smoothing parameter for slit function (default: 0.1)\n"
+          "    Smoothing parameter for slit function (default: 1.0)\n"
           "maxiter : int, optional\n"
           "    Maximum number of iterations (default: 20)\n"
           "kappa : float, optional\n"
@@ -297,7 +303,9 @@ NB_MODULE(charslit, m) {
           "    uncertainty : ndarray (ncols,)\n"
           "        Spectrum uncertainties\n"
           "    info : ndarray (5,)\n"
-          "        Status information [success, cost, status, iter, delta_x]\n"
+          "        Status information [success, cost, status, iter, delta_x].\n"
+          "        status: 1 converged, -1 out of iterations,\n"
+          "        -2 curvature too large, -3 non-finite result\n"
           "    mask : ndarray (nrows, ncols), uint8\n"
           "        Updated pixel mask after outlier rejection\n"
           "    return_code : int\n"

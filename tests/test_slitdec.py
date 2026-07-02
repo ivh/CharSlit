@@ -313,6 +313,32 @@ class TestNumericalBehavior:
         assert info[3] > 0, "Should have run at least one iteration"
         save_test_data(data["im"], result["model"], info=result["info"])
 
+    def test_unmasked_nan_reports_failure(self, simple_image_data):
+        """Unmasked NaN pixels with kappa=0 must not be reported as success.
+
+        NaN propagates through the solve into the spectrum; the convergence
+        test alone cannot see this (NaN compares false and exits the loop),
+        so the info flags must report the failure explicitly.
+        """
+        data = simple_image_data
+        im = data["im"].copy()
+        im[data["nrows"] // 2, data["ncols"] // 2] = np.nan
+
+        result = charslit.slitdec(
+            im,
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+            kappa=0,
+        )
+        info = result["info"]
+        assert np.isnan(result["spectrum"]).any()
+        assert info[0] == 0, "success flag must be cleared on non-finite result"
+        assert info[2] == -3, "status must indicate non-finite result"
+
     @pytest.mark.save_output
     def test_mask_modification(self, simple_image_data, save_test_data):
         """Test that mask is modified to reject outliers."""
@@ -681,6 +707,29 @@ class TestPresetSlitfunction:
         )
         assert result["return_code"] == 0
         np.testing.assert_allclose(result["spectrum"], normal["spectrum"], rtol=1e-8, atol=1e-8)
+
+    def test_single_pass_with_kappa_zero(self, simple_image_data):
+        """Preset + kappa=0 runs exactly one iteration and still matches
+        the spectrum of the normal run that produced the slit function."""
+        data = simple_image_data
+        normal = charslit.slitdec(
+            data["im"], data["pix_unc"], data["mask"], data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+            kappa=0,
+        )
+        assert normal["return_code"] == 0
+
+        result = charslit.slitdec(
+            data["im"], data["pix_unc"], data["mask"], data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+            kappa=0,
+            preset_slitfunc=normal["slitfunction"].copy(),
+        )
+        assert result["return_code"] == 0
+        info = result["info"]
+        assert info[0] == 1
+        assert info[3] == 1, "single-pass extraction must run exactly one iteration"
+        np.testing.assert_allclose(result["spectrum"], normal["spectrum"], rtol=1e-6, atol=1e-6)
 
     def test_preset_length_ny(self, simple_image_data):
         """A preset of length ny is used directly."""
