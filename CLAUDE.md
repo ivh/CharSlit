@@ -192,7 +192,7 @@ The algorithm:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `im` | ndarray (nrows, ncols) | Input 2D spectral image |
-| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties (typically from Poisson noise) |
+| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties. **Currently unused**: output uncertainties are estimated from data − model residuals |
 | `mask` | ndarray (nrows, ncols), uint8 | Pixel mask (0=bad, 1=good). **Modified during execution** |
 | `ycen` | ndarray (ncols,) | Order center line offset from pixel boundary. **Modified during execution** |
 | `slitcurve` | ndarray (ncols, n) where n ≤ 6 | Polynomial coefficients [c0..c5] for slit curvature (padded to 6) |
@@ -202,6 +202,17 @@ The algorithm:
 | `lambda_sL` | float | Smoothing parameter for slit function (default: 1.0) |
 | `maxiter` | int | Maximum iterations (default: 20) |
 | `kappa` | float | Outlier rejection threshold in sigma (default: 10.0). Set to 0 to disable. |
+| `preset_slitfunc` | ndarray (nrows,) or (ny,), optional | Fixed slit function: skips the sL solve. Length nrows is interpolated to ny; normalized internally. With `kappa=0` this is a true single-pass extraction (exactly 1 iteration). |
+
+### info array and status codes
+
+`info = [success, sP_change, status, iter, delta_x]`. Status codes:
+- `1`: converged
+- `-1`: ran out of iterations (only when `iter` exceeds `maxiter`; converging exactly at `maxiter` counts as success)
+- `-2`: curvature too large (`nx > ncols`); the wrapper returns zeroed `model`/`unc` in this case
+- `-3`: non-finite result, e.g. unmasked NaN pixels with `kappa=0`. Checked explicitly after the loop because the convergence test alone cannot catch it (NaN comparisons are false, so the loop exits as if converged).
+
+Convergence criterion (PyReduce-style): stop when the 99th percentile of the per-column spectrum change drops below `5e-5 * median(sP)`; minimum 2 iterations (except preset + `kappa=0`, which runs exactly 1).
 
 ### Important: slitdeltas
 
@@ -281,6 +292,17 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
   large — this is the same class of bug as the `delta_x` allocation issue
   above. If you change either window's width, recheck this allocation.
 - **Model pass** iterates `x` outermost so `zeta` is read sequentially.
+- **Safety guards (July 2026).** `zeta_add` drops entries once a pixel's
+  zeta list is full (`MAX_ZETA_Z = 3*(osample+1)`; real data already reaches
+  18 of 21 slots), and the unique-key fallback fills drop pairs whose key
+  distance exceeds the band half-width — `bandsol` cannot represent such
+  pairs and they previously wrote past the row's band (heap corruption).
+  Neither guard triggers on current test data (verified empirically: max
+  per-pixel iy range 7 vs limit `2*osample`, max x range 3 vs `2*delta_x`).
+  Note `delta_x` is the max of the curve shift and the slitdeltas shift
+  taken *separately*, not their sum; in practice the two are complementary
+  (large polynomial curvature implies small deltas and vice versa), and the
+  fallback guards now make the underestimate safe rather than corrupting.
 
 ## Polynomial Degree Handling
 
@@ -323,7 +345,7 @@ If degree >5 is needed in the future, only the C code needs updating (change `*6
 
 ### Test Organization
 
-`tests/test_slitdec.py` has 8 classes:
+`tests/test_slitdec.py` has 9 classes:
 - **TestBasicFunctionality**: Import, callable, basic execution
 - **TestOutputStructure**: Output format validation
 - **TestInputValidation**: Error handling for invalid inputs
@@ -332,6 +354,7 @@ If degree >5 is needed in the future, only the C code needs updating (change `*6
 - **TestDefaultParameters**: Default values verification
 - **TestMemoryManagement**: Input preservation, multiple calls
 - **TestRealData**: Tests on real FITS files from `data/` directory
+- **TestPresetSlitfunction**: Single-pass extraction with a fixed slit function
 
 `tests/test_regression.py` adds golden-reference tests (see speed.md):
 they pin spectrum/slit-function/model/uncertainty (rtol 1e-10) and the
@@ -341,7 +364,7 @@ Goldens are gitignored local artifacts; regenerate with
 
 ### Running Tests
 
-**Fast automated testing** (default run: ~36 passed, 1 skipped, 13 deselected):
+**Fast automated testing** (default run: ~44 passed, 1 skipped, 13 deselected):
 ```bash
 pytest
 ```
@@ -421,21 +444,6 @@ Real data files in `data/` (gitignored, see Data Files below): `Hsim`,
 uv cache clean
 uv pip install -e . --force-reinstall --no-deps
 ```
-
-## Interface Documentation Issues
-
-**interface.md line 16** states:
-```
-double *slitdeltas, // exposed, array length nrows
-```
-
-This comment is **incorrect**. The C code requires `ny = osample * (nrows + 1) + 1`, not `nrows`.
-
-However, the **wrapper** now accepts both lengths:
-- Length `nrows`: Interpolated to `ny` (matches real data format)
-- Length `ny`: Used directly
-
-So the interface.md comment is now effectively correct for the **Python interface**, but misleading about the **C interface**.
 
 ## Memory Management Notes
 
