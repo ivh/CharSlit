@@ -27,20 +27,21 @@ Output is preserved within the regression tolerance (golden references
 unchanged; the only differences are at the rounding level from reordered
 accumulation). See "What was changed", Round 2 below.
 
-### Round 3: flat fast path, y-major zeta, multithreading (July 2026)
+### Round 3: flat fast path + y-major zeta (July 2026)
 
-Benchmark totals (`uv run python bench.py 5`, best-of-5, M4 Pro):
+Benchmark totals (`uv run python bench.py 5`, best-of-5, single-threaded,
+M4 Pro):
 
 | File | Round 2 (7540af6) | Round 3 | speedup |
 |---|---|---|---|
-| CRIRES_UNE_J (2048x2048) | 8723 ms | 82 ms | 106x |
-| CRIRES1 (176x2048) | 413 ms | 70 ms | 5.9x |
-| CRIRES2 (176x2048) | 421 ms | 71 ms | 5.9x |
-| ANDES_R_FP1 (404x2556) | 425 ms | 67 ms | 6.3x |
-| Hsim / Rsim / sims | 1.3-4.3 ms | 0.5-2.9 ms | 2-7x |
-| TOTAL | 9998 ms | 295 ms | 34x |
+| CRIRES_UNE_J (2048x2048) | 8723 ms | 347 ms | 25x |
+| CRIRES1 (176x2048) | 413 ms | 365 ms | 1.13x |
+| CRIRES2 (176x2048) | 421 ms | 369 ms | 1.14x |
+| ANDES_R_FP1 (404x2556) | 425 ms | 361 ms | 1.18x |
+| Hsim / Rsim / sims | 1.3-4.3 ms | 0.5-2.7 ms | 2-7x |
+| TOTAL | 9998 ms | 1448 ms | 6.9x |
 
-Three independent changes:
+Two structural changes:
 
 1. **Flat-geometry fast path.** When every curvature coefficient and every
    slitdelta is exactly 0.0, pixel (x,y) receives exactly the osample+1
@@ -61,34 +62,24 @@ Three independent changes:
    per-column operation sequence, so all inserted values are bit-identical;
    only the order of entries within one pixel's list changes.
 
-3. **Multithreading (pthreads).** The two SLE fills, the model, the
-   dev/mask pass, the uncertainty pass and the zeta build run on a small
-   persistent worker pool (created once per slitdec call). Design rules:
-   - Work is split into a fixed number of chunks (PAR_CHUNKS = 32,
-     independent of thread count); each chunk accumulates into its own
-     partial band slice, reduced in chunk order. Results are identical
-     for any thread count >= 2 (and within the golden tolerance of the
-     sequential path, which small images and CHARSLIT_THREADS=1 use).
-   - The sL fill chunks rows, the sP fill chunks columns - each keeps its
-     partial band slice narrow.
-   - The zeta build chunks columns with a halo of 2*delta_x+2 source
-     columns: every pixel's zeta list is written by exactly one chunk in
-     the exact sequential order, so the built tensor is bit-identical to
-     the sequential build.
-   - Thread count: `CHARSLIT_THREADS` env var; default min(12, cores);
-     images under ~100k pixels stay sequential.
+Also in this round: the uncertainty pass loop order fixed (it strided
+zeta before), the delta_x scan skips all-zero polynomial columns, and the
+flat moment loop uses 4-way interleaved accumulators to break dependency
+chains.
 
-Also in this round: the uncertainty pass loop order fixed (was striding
-zeta), the delta_x scan skips all-zero polynomial columns, and the flat
-moment loop and dev sum use 4-way interleaved accumulators to break
-dependency chains.
+**Multithreading: implemented, validated, then deliberately removed.**
+A pthread pool version of the fills/model/unc/zeta build (deterministic
+fixed-chunk partitions with ordered reduction; goldens passed at 1-12
+threads; TSan/ASan/UBSan clean; total 295 ms at 12 threads) exists in
+commit fa52331, but was removed again: parallelization in this project
+happens at a higher level (swaths / orders / frames), so the C code must
+stay single-threaded to avoid oversubscription. Do not re-add threading
+here; recover it from that commit if the situation ever changes.
 
-Verified: golden regression tests (rtol 1e-10, masks exact) pass at 1, 2,
-5, and 12 threads against sequentially-generated references; ASan, UBSan
-and TSan are clean on both the curved and flat paths at 1-12 threads;
-spectrum checksums are identical across thread counts.
+Verified: golden regression tests (rtol 1e-10, masks exact) unchanged;
+ASan and UBSan clean on both the curved and flat paths.
 
-A false lead worth remembering: two attempts to fix the fills by
+A false lead worth remembering: two attempts to speed the fills by
 separating the merge and pair phases (per-column buffers, then a
 full-image window buffer) changed nothing or made things worse - and
 early "10x" experiment numbers turned out to be garbage-math runs exiting

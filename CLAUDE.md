@@ -273,8 +273,9 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
 ## Performance: zeta tensor, SLE fills, threading
 
 `slitdec` was optimized in three rounds (full rationale and benchmarks in
-`speed.md`; Round 3 brought the bench total from ~10 s to ~0.3 s). The
-current structure future sessions should know about:
+`speed.md`; Round 3 brought the bench total from ~10 s to ~1.4 s
+single-threaded). The current structure future sessions should know
+about:
 
 - **zeta only, pixel-centric fills, y-major.** The geometry is a single
   `zeta` tensor (subpixels contributing to each detector pixel), stored
@@ -300,15 +301,11 @@ current structure future sessions should know about:
   model and uncertainties directly from ycen and the zeta tensor is never
   built or allocated. Gated by an exact zero test; ~100x on the 2048x2048
   no-curvature frame.
-- **Multithreading.** The fills, model, dev/mask, uncertainty and zeta
-  build run on a per-call pthread pool (`CHARSLIT_THREADS` env var,
-  default min(12, cores), sequential below ~100k pixels). Work is split
-  into PAR_CHUNKS=32 fixed chunks with per-chunk partial band slices
-  reduced in chunk order, so results are independent of the thread count;
-  the parallel zeta build (column chunks + halo, exclusive target-column
-  ownership) is bit-identical to the sequential build. If you add a new
-  accumulation pass, follow the same pattern — never accumulate into
-  shared arrays from multiple chunks directly.
+- **Single-threaded BY DESIGN — do not add threading here.**
+  Parallelization happens at a higher level (swaths / orders / data
+  frames), so in-library threads would only oversubscribe cores. A fully
+  validated pthread version (deterministic chunked reduction, ~5x on the
+  fills) exists in commit fa52331 if that decision is ever revisited.
 - **Safety guards (July 2026).** `zeta_add` drops entries once a pixel's
   zeta list is full (`MAX_ZETA_Z = 3*(osample+1)`; real data already reaches
   18 of 21 slots), and the unique-key fallback fills drop pairs whose key
