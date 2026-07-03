@@ -1,0 +1,84 @@
+{
+ "swaths": [
+  {
+   "name": "ANDES_R_FP1",
+   "url": "data/ANDES_R_FP1.fits",
+   "ncols": 2556,
+   "nrows": 404,
+   "c1": 0.07859,
+   "c2": 0.0,
+   "ycen_frac": 0.51,
+   "fitted": true
+  },
+  {
+   "name": "CRIRES1",
+   "url": "data/CRIRES1.fits",
+   "ncols": 2048,
+   "nrows": 176,
+   "c1": -0.05216,
+   "c2": 0.0,
+   "ycen_frac": 0.498,
+   "fitted": true
+  },
+  {
+   "name": "CRIRES2",
+   "url": "data/CRIRES2.fits",
+   "ncols": 2048,
+   "nrows": 176,
+   "c1": -0.05593,
+   "c2": 2.3e-05,
+   "ycen_frac": 0.498,
+   "fitted": true
+  },
+  {
+   "name": "Hsim",
+   "url": "data/Hsim.fits",
+   "ncols": 53,
+   "nrows": 90,
+   "c1": 0.06029,
+   "c2": -0.00011,
+   "ycen_frac": 0.0,
+   "fitted": true
+  },
+  {
+   "name": "Rsim",
+   "url": "data/Rsim.fits",
+   "ncols": 84,
+   "nrows": 140,
+   "c1": 0.10864,
+   "c2": 0.0,
+   "ycen_frac": 0.0,
+   "fitted": true
+  },
+  {
+   "name": "discontinuous",
+   "url": "data/discontinuous.fits",
+   "ncols": 150,
+   "nrows": 100,
+   "c1": 0.0,
+   "c2": 0.0,
+   "ycen_frac": 0.5,
+   "fitted": false
+  },
+  {
+   "name": "fixedslope",
+   "url": "data/fixedslope.fits",
+   "ncols": 150,
+   "nrows": 100,
+   "c1": 0.0,
+   "c2": 0.0,
+   "ycen_frac": 0.5,
+   "fitted": false
+  },
+  {
+   "name": "multislope",
+   "url": "data/multislope.fits",
+   "ncols": 150,
+   "nrows": 100,
+   "c1": 0.0,
+   "c2": 0.0,
+   "ycen_frac": 0.5,
+   "fitted": false
+  }
+ ]
+}
