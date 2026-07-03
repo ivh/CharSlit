@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slitdec in the browser</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>slitdec &mdash; slit decomposition in the browser</h1>
+  <div class="subtitle">
+    CharSlit's C solver compiled to WebAssembly. Decomposes a 2D spectral
+    swath into a 1D spectrum and a slit illumination function.
+    Drag the sliders; the extraction reruns live.
+  </div>
+</header>
+
+<div class="layout">
+  <aside id="controls">
+    <div class="io-row">
+      <label class="filebtn">Load FITS / .npy
+        <input type="file" id="fileinput" accept=".fits,.fit,.fts,.npy">
+      </label>
+      <button id="resetbtn" title="Restore the built-in synthetic swath">Synthetic</button>
+    </div>
+    <select id="swathsel" hidden>
+      <option value="">sample swaths&hellip;</option>
+    </select>
+    <div id="filemsg"></div>
+
+    <div id="sliders"></div>
+
+    <div id="statusbar">
+      <div><span class="k">status</span><span id="st-status">&ndash;</span></div>
+      <div><span class="k">iterations</span><span id="st-iter">&ndash;</span></div>
+      <div><span class="k">delta_x</span><span id="st-dx">&ndash;</span></div>
+      <div><span class="k">solve time</span><span id="st-ms">&ndash;</span></div>
+      <div><span class="k">rejected px</span><span id="st-rej">&ndash;</span></div>
+    </div>
+
+    <div id="hoverbox">&nbsp;</div>
+
+    <div class="footnote">
+      Masked / kappa-rejected pixels are tinted red in the data panel.
+      Uploads should be single-order swaths with little or uniform curvature;
+      the sliders apply one curvature polynomial to all columns.
+    </div>
+  </aside>
+
+  <main id="plots">
+    <div class="imrow">
+      <figure><figcaption>data</figcaption><canvas id="c-data"></canvas></figure>
+      <figure><figcaption>model</figcaption><canvas id="c-model"></canvas></figure>
+      <figure><figcaption>data &minus; model</figcaption><canvas id="c-resid"></canvas></figure>
+    </div>
+    <figure class="line"><figcaption>spectrum (&plusmn;1&sigma;)</figcaption><canvas id="c-spec"></canvas></figure>
+    <figure class="line"><figcaption>slit function</figcaption><canvas id="c-slit"></canvas></figure>
+  </main>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

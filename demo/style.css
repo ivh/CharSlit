@@ -1,0 +1,123 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.45 system-ui, -apple-system, sans-serif;
+  background: #14161a;
+  color: #d8dade;
+}
+
+header { padding: 14px 20px 6px; }
+header h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+.subtitle { color: #9aa0aa; max-width: 70em; }
+
+.layout {
+  display: flex;
+  gap: 16px;
+  padding: 12px 20px 24px;
+  align-items: flex-start;
+}
+
+#controls {
+  flex: 0 0 300px;
+  background: #1c1f25;
+  border: 1px solid #2a2e36;
+  border-radius: 8px;
+  padding: 14px;
+  position: sticky;
+  top: 12px;
+}
+
+.io-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.filebtn, #resetbtn {
+  flex: 1;
+  text-align: center;
+  background: #2a2e36;
+  border: 1px solid #3a3f4a;
+  border-radius: 6px;
+  color: #d8dade;
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.filebtn:hover, #resetbtn:hover { background: #343945; }
+.filebtn input { display: none; }
+
+#swathsel {
+  width: 100%;
+  margin-bottom: 6px;
+  background: #2a2e36;
+  border: 1px solid #3a3f4a;
+  border-radius: 6px;
+  color: #d8dade;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+#filemsg { min-height: 1.2em; font-size: 12px; color: #e0a34e; margin-bottom: 8px; }
+
+.slider-row { margin-bottom: 10px; }
+.slider-row .lbl {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.slider-row .lbl .val { color: #7ec8e3; font-variant-numeric: tabular-nums; }
+.slider-row input[type=range] { width: 100%; margin: 0; }
+
+#statusbar {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #2a2e36;
+  font-size: 13px;
+}
+#statusbar > div { display: flex; justify-content: space-between; }
+#statusbar .k { color: #9aa0aa; }
+#st-status.ok { color: #7fd48a; }
+#st-status.bad { color: #e06a6a; }
+
+#hoverbox {
+  margin-top: 8px;
+  font: 12px/1.4 ui-monospace, Menlo, monospace;
+  color: #9aa0aa;
+  min-height: 2.8em;
+}
+
+.footnote {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #757c88;
+}
+
+#plots {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.imrow { display: flex; flex-direction: column; gap: 12px; }
+
+figure { margin: 0; }
+figcaption { font-size: 13px; color: #9aa0aa; margin-bottom: 4px; }
+
+canvas {
+  width: 100%;
+  display: block;
+  background: #0d0e11;
+  border: 1px solid #2a2e36;
+  border-radius: 4px;
+}
+.imrow canvas {
+  image-rendering: pixelated;
+  width: 100%;
+  max-height: 42vh;
+  object-fit: contain;   /* tall uploads letterbox instead of distorting */
+}
+figure.line canvas { height: 190px; }
+
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  #controls { position: static; flex: none; width: 100%; }
+}

@@ -63,6 +63,12 @@ uv run pytest
 uv run pytest -m save_output
 ```
 
+## Browser Demo
+
+A static web demo runs the C solver as WebAssembly, with live parameter sliders on sample swaths or uploaded FITS/npy files: **https://ivh.github.io/CharSlit/**
+
+See [webdemo.md](webdemo.md) for the wasm build and demo documentation.
+
 ## Developer Documentation
 
 For detailed information about the build system, algorithm internals, testing infrastructure, and common issues, see [CLAUDE.md](CLAUDE.md).
