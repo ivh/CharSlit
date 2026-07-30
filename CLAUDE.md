@@ -289,10 +289,24 @@ about:
 - **Dense-window merge (`zeta_rng`).** `zeta_tensors`/`zeta_add` maintain a
   per-pixel `zeta_rng` (min/max of `iy` and of `x`). The fills merge a
   pixel's entries by scattering into a dense window `zw[key - k0]` instead
-  of searching unique keys, with a unique-key fallback for over-wide
-  geometry (`rng > 2*osample` for sL, `> 2*delta_x` for sP).
+  of searching unique keys. The sL fill keeps a unique-key fallback for
+  over-wide geometry (`rng > 2*osample`); the sP fill needs none, see next
+  point.
+- **sP band width is measured, not derived from `delta_x`.** `p_Aij[x,x']`
+  is nonzero only where one detector pixel draws from both columns, so the
+  band is set by the widest source-column span of a single pixel (2 on all
+  test data) and not by the largest shift in the swath (`delta_x` up to 17,
+  i.e. the old `nx = 4*delta_x+1` reached 69). After the geometry build,
+  `bx` = max span over all pixels (at least 1 when `lambda_sP > 0`, which
+  writes the first off-diagonal) and `nx = 2*bx+1`; `delta_x` still governs
+  allocation (`nx_alloc`), the edge zeroing and `info[4]`. Because `bx` is
+  the measured maximum, `rng <= bx` holds for every pixel, so the sP fill's
+  key-search fallback is unreachable and was removed. Ported from PyReduce
+  1dc9333c; bit-identical on all 12 golden cases but no measurable win on
+  our bench (`bandsol` on `p_Aij` is a few percent of the runtime here — the
+  1.1-1.4x PyReduce saw came from UVES swaths with much larger `delta_x`).
 - **GOTCHA — scratch buffer sizing.** `zw`/`zk` must hold the larger of the
-  two windows, so they are sized `max(MAX_ZETA_Z, nx)`. `MAX_ZETA_Z` alone
+  two windows, so they are sized `max(MAX_ZETA_Z, nx_alloc)`. `MAX_ZETA_Z` alone
   (`3*(osample+1)`) is too small for the spectrum window when `delta_x` is
   large — this is the same class of bug as the `delta_x` allocation issue
   above. If you change either window's width, recheck this allocation.
@@ -308,15 +322,15 @@ about:
   fills) exists in commit fa52331 if that decision is ever revisited.
 - **Safety guards (July 2026).** `zeta_add` drops entries once a pixel's
   zeta list is full (`MAX_ZETA_Z = 3*(osample+1)`; real data already reaches
-  18 of 21 slots), and the unique-key fallback fills drop pairs whose key
+  18 of 21 slots), and the sL unique-key fallback fill drops pairs whose key
   distance exceeds the band half-width — `bandsol` cannot represent such
   pairs and they previously wrote past the row's band (heap corruption).
   Neither guard triggers on current test data (verified empirically: max
-  per-pixel iy range 7 vs limit `2*osample`, max x range 3 vs `2*delta_x`).
-  Note `delta_x` is the max of the curve shift and the slitdeltas shift
-  taken *separately*, not their sum; in practice the two are complementary
-  (large polynomial curvature implies small deltas and vice versa), and the
-  fallback guards now make the underestimate safe rather than corrupting.
+  per-pixel iy range 7 vs limit `2*osample`). Note `delta_x` is the max of
+  the curve shift and the slitdeltas shift taken *separately*, not their
+  sum; in practice the two are complementary (large polynomial curvature
+  implies small deltas and vice versa). For sP the underestimate no longer
+  matters at all now that the band is measured from the geometry.
 
 ## Polynomial Degree Handling
 
