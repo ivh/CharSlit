@@ -3,9 +3,15 @@
 Deferred items from the `slitkernel` branch. Context in CLAUDE.md, "Slit kernels".
 
 - **chi2 floor.** With kernels the synthetic calibration frame still sits at chi2 ~50
-  (noisy) / ~210 (noiseless). Find what is left: within-row fibre structure finer than the
-  0.5-row nodes, the renderer's 0.1-px tilt quantisation, sP sampling on the 1-px grid.
-  Try node_step 0.25 and the osamp_spec branch (sP on a finer grid).
+  (noisy) / ~210 (noiseless, from ~440). Probed (2026-10-13): the floor does not move with
+  node_step (1.0/0.5/0.25: 236/215/212), nk (9/13) or slit tilt (0: 197). The residual sits
+  in the line cores and alternates at the fibre pitch (junction rows modelled too broad,
+  centre rows too narrow). The alternating scheme (fit D against the current model, slitdec
+  re-solves sP/sL) stalls after 2-3 iterations and then degrades; a common initial
+  broadening (so rows need broadening, not sharpening), weaker sL smoothing and an
+  unweighted fit (slitdec's own solves ignore pix_unc) did not help. Next: solve the
+  kernels as a third block inside slitdec's iteration (same objective as sP/sL), and/or
+  sP on a finer grid (osamp_spec branch).
 - **Speed.** Kernels expand every zeta entry nk-fold (x9 runtime at nk = 9). Applying the
   kernel to the merged per-pixel window in the fills/model instead would keep zeta small.
 - **Wrapper nrows -> ny mapping** for slitdeltas/preset_slitfunc/slitkernel is a linear
