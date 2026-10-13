@@ -289,3 +289,134 @@ def selfcal_lsq(
         K = compose(K, D)
     _, K, res = best
     return dict(kernel_rows=K, kernel=rows_to_subpix_nearest(K, os_, ycen_frac), result=res, chi2=hist)
+
+
+def subpix_u(ny, osample):
+    """Slit coordinate u = y_detector - ycen_frac of the centre of each slitdec subpixel.
+
+    From slitdec's geometry (verified with single-subpixel preset slit functions): in a
+    rectified column with ycen fraction c, subpixel i spans detector rows
+    [i/os - 1 + c - 1/os, i/os - 1 + c). The special case of c an exact multiple of
+    1/os (where slitdec shifts by one subpixel) is ignored.
+    """
+    step = 1.0 / osample
+    return np.arange(ny) / osample - 1 - step / 2
+
+
+def fit_kernels_u(im, model, ycen_frac, nodes, nk=9, mask=None, unc=None, ridge=1e-3, edge=None, smooth=0.0,
+                  osample=6):
+    """Correction kernels D(u) on slit-coordinate nodes, linear interpolation between nodes.
+
+    Minimises sum over pixels of ((im - sum_j D_j model[x - o_j]) / unc)^2, where a
+    pixel's kernel is the average of D(u) over its osample subpixels (u = y - ycen_frac,
+    the pixel spans [row, row+1) in y), as in slitdec's model. Constraints/regularisers:
+    sum_j D_j(node) = 1, a ridge towards a delta and an optional second-difference
+    penalty across nodes (smooth), both scaled to the mean diagonal of the normal matrix.
+    Returns (nnodes, nk).
+    """
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spl
+
+    nrows, ncols = im.shape
+    h = nk // 2
+    edge = h if edge is None else edge
+    nn = len(nodes)
+    cols = np.arange(edge, ncols - edge)
+    rr, xx = np.meshgrid(np.arange(nrows), cols, indexing="ij")
+    u0 = rr - np.asarray(ycen_frac)[xx]
+    good = np.ones_like(u0, bool) if mask is None else mask[rr, xx] > 0
+    good &= (u0 >= nodes[0]) & (u0 + 1 <= nodes[-1])
+    rr, xx, u0 = rr[good], xx[good], u0[good]
+    w = np.ones(len(rr)) if unc is None else 1.0 / unc[rr, xx]
+    npix = len(rr)
+    # subpixel-averaged hat-function weights: (npix, nn) sparse
+    bw_r, bw_c, bw_v = [], [], []
+    for sidx in range(osample):
+        pos = np.interp(u0 + (sidx + 0.5) / osample, nodes, np.arange(nn))
+        b0 = np.clip(np.floor(pos).astype(int), 0, nn - 2)
+        f = pos - b0
+        for bb, fw in ((b0, 1 - f), (b0 + 1, f)):
+            bw_r.append(np.arange(npix))
+            bw_c.append(bb)
+            bw_v.append(fw / osample)
+    B = sp.csr_matrix((np.concatenate(bw_v), (np.concatenate(bw_r), np.concatenate(bw_c))), shape=(npix, nn))
+    # E = D - delta with sum_j E_j = 0, parametrised by the nk-1 taps other than the centre:
+    # the model term for tap j != c is (M[x-o_j] - M[x]) * E_j
+    others = [j for j in range(nk) if j != h]
+    Mc = model[rr, xx]
+    y = (im[rr, xx] - Mc) * w
+    blocks = []
+    for j in others:
+        col = np.clip(xx - (j - h), 0, ncols - 1)
+        v = (model[rr, col] - Mc) * w
+        blocks.append(sp.diags(v) @ B)
+    # unknown ordering: node-major (b * (nk-1) + k)
+    A = sp.hstack(blocks).tocsc()
+    perm = np.arange(nn * (nk - 1)).reshape(nk - 1, nn).T.ravel()
+    A = A[:, perm]
+    AtA = (A.T @ A).tocsc()
+    lam = ridge * AtA.diagonal().mean()
+    reg = lam * sp.identity(AtA.shape[0], format="csc")
+    if smooth > 0:
+        L = sp.diags([1.0, -2.0, 1.0], [0, 1, 2], shape=(nn - 2, nn))
+        L = sp.kron(L, sp.identity(nk - 1))
+        reg = reg + smooth * AtA.diagonal().mean() * (L.T @ L).tocsc()
+    E = spl.spsolve(AtA + reg, A.T @ y)
+    E = E.reshape(nn, nk - 1)
+    D = np.zeros((nn, nk))
+    D[:, others] = E
+    D[:, h] = 1.0 - E.sum(1)
+    return D
+
+
+def selfcal_u(im, ycen, slitcurve, slitdeltas, *, nk=9, niter=6, node_step=0.5, rn=10.0, ridge=1e-3, stop_rel=0.02,
+              row_weight_min=0.2, smooth=0.0, **slitdec_kw):
+    """Kernel self-calibration in slit coordinates, for swaths whose ycen fraction varies.
+
+    ycen is passed to slitdec unchanged (absolute values are fine); its fractional part
+    defines each column's slit coordinate. Kernels live on nodes in u (spacing node_step
+    rows) and are interpolated onto slitdec's subpixels.
+    """
+    nrows, ncols = im.shape
+    mask = np.isfinite(im).astype(np.uint8)
+    im = np.nan_to_num(im)
+    unc = np.sqrt(np.abs(im) + rn**2)
+    kw = dict(osample=6, lambda_sP=0.0, lambda_sL=0.1, maxiter=20, kappa=0)
+    kw.update(slitdec_kw)
+    os_ = kw["osample"]
+    ny = os_ * (nrows + 1) + 1
+    ycen = np.asarray(ycen, float)
+    frac = ycen - np.floor(ycen)
+    nodes = np.arange(-1.0, nrows + 1.0 + 1e-9, node_step)
+    uS = subpix_u(ny, os_)
+    K = np.zeros((len(nodes), nk))
+    K[:, nk // 2] = 1.0
+    to_sub = lambda Kn: np.stack([np.interp(uS, nodes, Kn[:, j]) for j in range(nk)], axis=1)  # noqa: E731
+    # nodes on weakly illuminated slit positions (edges, inter-slit gaps) stay a delta
+    rowflux = (im * mask).sum(1)
+    node_flux = np.interp(nodes, np.arange(nrows) + 0.5 - np.median(frac), rowflux, left=0, right=0)
+    lit = node_flux > row_weight_min * rowflux.max()
+    hist, best = [], None
+    fitmask = mask.copy()
+    for it in range(niter + 1):
+        kern = None if it == 0 else to_sub(K)
+        res = charslit.slitdec(im, unc, mask, ycen.copy(), slitcurve, slitdeltas, slitkernel=kern, **kw)
+        if it == 0:
+            # slitdec zeroes sP within delta_x of the swath ends, and the curved slit
+            # spreads that over up to 2*delta_x columns of the model: exclude the wedge
+            dx = int(res["info"][4])
+            fitmask[:, : 2 * dx] = 0
+            fitmask[:, ncols - 2 * dx :] = 0
+        chi2 = float(((((im - res["model"]) / unc) ** 2)[fitmask > 0]).mean())
+        hist.append(chi2)
+        if best is None or chi2 < best[0]:
+            best = (chi2, K.copy(), res)
+        elif chi2 > (1 + stop_rel) * best[0]:
+            break
+        if it == niter:
+            break
+        D = fit_kernels_u(im, res["model"], frac, nodes, nk, fitmask, unc, ridge, smooth=smooth, osample=os_)
+        D[~lit] = np.eye(nk)[nk // 2]
+        K = compose(K, D)
+    _, K, res = best
+    return dict(nodes=nodes, kernel_nodes=K, kernel=to_sub(K), result=res, chi2=hist, fitmask=fitmask, lit=lit)
