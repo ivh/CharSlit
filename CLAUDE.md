@@ -332,6 +332,79 @@ about:
   implies small deltas and vice versa). For sP the underestimate no longer
   matters at all now that the band is measured from the geometry.
 
+## Slit kernels (`slitkernel`, branch `slitkernel`)
+
+slitdec assumes every slit (sub)row carries the same spectrum sP, only shifted along the
+curved slit. For a fibre-fed pseudo-slit that is wrong in the dispersion direction: rows
+through a fibre centre see the full disk chord, rows at fibre junctions see short chords
+(ANDES R, from the ZEMAX HDF: per-row LSF variance swings by +-0.6..1 px^2 around 2 px^2 at
+the fibre pitch), and PSF width/skew can trend along the slit. The optional `slitkernel`
+argument lets each subpixel row iy convolve sP with its own kernel before the shift:
+
+    model(x, y) = sum_iy w * sL[iy] * (K_iy * sP)(x - delta(iy)),   (K * sP)[x] = sum_j K[j] sP[x - (j - nk//2)]
+
+- Shape (ny, nk) or (nrows, nk), nk odd; nrows is stretched to ny by the wrapper's linear
+  map (see the gotcha below - prefer passing ny-length kernels built with slitkernel.py).
+- Implemented by expanding each zeta entry into nk entries (`zeta_add_k`); `MAX_ZETA_Z` scales
+  with nk (`_nkz`), `delta_x += nk//2`, the flat fast path is off, `zeta_add` accepts negative
+  weights. No kernel = bit-identical to before (golden suite). A kernel common to all rows is
+  degenerate with sP (absorbed, model unchanged); sP then carries the common part of the LSF.
+- Cost ~linear in nk: 0.03 s -> 0.27 s per 404x256 swath at nk = 9.
+
+### slitkernel.py (calibration helpers)
+
+- `selfcal_u` - the one to use: nonparametric kernels on slit-coordinate nodes
+  (u = y - ycen_frac, node_step 0.5 rows), fitted by sparse least squares of data against
+  `D(u) * model` (a row-constant kernel commutes with the subpixel shifts), composed
+  iteratively, keeps the best-chi2 iteration. Handles ycen fractions that vary across the
+  swath (real rectified cutouts). Excludes the swath-edge wedge (2*delta_x columns each side)
+  from fit and chi2. Do not turn on `smooth`: it biases the kernels (chi2 54 -> 68 and
+  +-5 m/s illumination-dependent centroid shifts in the psf_width test).
+- `selfcal_lsq` - same per detector row; only valid for constant ycen fraction.
+- `selfcal` - moment-based (k1 -> slitdeltas, k2/k3 -> parametric kernels). Use it for k1
+  (slitdeltas from data-vs-model line centroids) only: parametric (Gaussian-shaped)
+  kernels with the right variance make chi2 worse, because the true per-row profiles
+  differ in shape (boxy chord vs peaky junction), not just in variance.
+- `kernel_from_moments` - discrete-Gaussian (exp(-t) I_n(t), variance exactly t) plus an
+  antisymmetric 5-tap skew term. A minimum-norm moment solution is NOT a delta at k2 = 0;
+  that was the first bug here.
+
+### Geometry gotchas found on the way
+
+- **Subpixel <-> row mapping** (verified with single-subpixel preset slit functions,
+  `test_subpix_u_matches_slitdec`): with ycen fraction c, subpixel i spans detector rows
+  [i/os - 1 + c - 1/os, i/os - 1 + c). When c is an exact multiple of 1/os (c = 0 included)
+  slitdec's d1 = step convention shifts this by one subpixel. Use c != k/os in tests.
+- **The wrapper's nrows -> ny interpolation** (slitdeltas, preset_slitfunc, slitkernel) is a
+  linear stretch i*(nrows-1)/(ny-1), up to ~1.5 rows off the mapping above. Harmless for
+  smooth slitdeltas; wrong for anything on the fibre scale. `slitkernel.rows_to_subpix`
+  does it properly (constant ycen fraction).
+- Swaths must satisfy 4*delta_x + 1 <= ncols or slitdec returns status -2 with a zero model
+  (ANDES_R_FP1 has delta_x ~ 17-20: 64-column swaths fail, 256 work).
+
+### Results (scripts/exp_fibre_kernel.py, scripts/exp_andes_r_fp1.py)
+
+Synthetic 18-fibre slit (fibreslit_sim.py, rendered independently of slitdec), calibrate
+on uniform illumination, extract gradient / half-slit / odd-even illuminations with the
+fixed calibration; change of extracted line centroid (m/s at 750 m/s/px) and variance:
+
+| scenario | nominal geometry | + selfcal slitdeltas | + selfcal_u kernels |
+|---|---|---|---|
+| fibre geometry only | 0 m/s, dk2 <= 0.01 | <= 0.3 m/s | <= 0.2 m/s, dk2 <= 0.008 |
+| PSF width trend 0.6 -> 1.0 px | 0 m/s, dk2 up to 0.16 px^2 | dk2 unchanged | <= 0.1 m/s, dk2 <= 0.006 |
+| + strong skew trend | 24 / 42 m/s, dk2 0.23 | 1.0 / 1.4 m/s | 0.4 / 0.5 m/s, dk2 <= 0.005 |
+| mild skew trend | 3 / 6 m/s | 0.4 m/s | <= 0.1 m/s |
+
+Same picture with Poisson noise (peak 3e4, 3 seeds). Calibration-frame chi2 drops ~3x
+(e.g. 169 -> 51) but stays far above 1 noiseless: kernels do not capture everything.
+On data/ANDES_R_FP1.fits (E2E, 256-column swaths) residual chi2 drops 2.5-10x per swath;
+part of what the kernels absorb there is slit geometry (curvature varying with x), not LSF.
+
+Note: pyechelle <= 0.4.0 caches PSFs per (ccd, order), not per fibre, so E2E frames use
+the first fibre's PSF for all fibres even though the ANDES HDFs store per-fibre PSFs
+(R band: |dPSF|/2 = 0.016 fibre 1 vs 66). The fibre-geometry part is in the frames; the
+PSF-variation part is not.
+
 ## Polynomial Degree Handling
 
 The codebase supports polynomial degrees 1-5 for fitting slit curvature. This flexibility is achieved through a pragmatic approach:

@@ -91,3 +91,30 @@ def test_selfcal_lsq_reduces_chi2(fibre_frame):
     im, sc = fibre_frame
     c = sk.selfcal_lsq(im, np.zeros(NC), sc, np.zeros(NR), niter=3, **KW)
     assert min(c["chi2"]) < 0.7 * c["chi2"][0]
+
+
+def test_selfcal_u_reduces_chi2(fibre_frame):
+    im, sc = fibre_frame
+    c = sk.selfcal_u(im, np.full(NC, 1e-3), sc, np.zeros(NR), niter=3, **KW)
+    assert min(c["chi2"]) < 0.7 * c["chi2"][0]
+    assert c["kernel"].shape == (6 * (NR + 1) + 1, 9)
+
+
+def test_subpix_u_matches_slitdec():
+    # a single-subpixel preset slit function lands on the detector rows subpix_u predicts
+    nr, nc, os_ = 20, 8, 6
+    ny = os_ * (nr + 1) + 1
+    u = sk.subpix_u(ny, os_)
+    im = np.ones((nr, nc))
+    for c in (0.1, 0.4, 0.9):
+        for i in (31, 62, 75):
+            sl = np.zeros(ny)
+            sl[i] = 1.0
+            r = charslit.slitdec(im, im, np.ones((nr, nc), np.uint8), np.full(nc, c), np.zeros((nc, 2)), np.zeros(nr),
+                                 osample=os_, kappa=0, preset_slitfunc=sl)
+            col = r["model"][:, 4] / r["model"][:, 4].sum()
+            lo = u[i] + c - 0.5 / os_
+            hi = lo + 1.0 / os_
+            rows = np.arange(nr)
+            expect = np.clip(np.minimum(hi, rows + 1) - np.maximum(lo, rows), 0, None) * os_
+            np.testing.assert_allclose(col, expect, atol=1e-9)

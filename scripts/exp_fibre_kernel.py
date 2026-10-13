@@ -11,6 +11,7 @@ Calibration variants:
   nominal       true tilt only (slitcurve), slitdeltas = 0, no kernel
   deltas        + per-row slitdeltas self-calibrated from line centroids (slitkernel.selfcal, k1 only)
   deltas+kern   + nonparametric per-row kernels (slitkernel.selfcal_lsq)
+  deltas+kern_u + the same in slit coordinates on 0.5-row nodes (slitkernel.selfcal_u)
 
 uv run --python 3.13 scripts/exp_fibre_kernel.py
 """
@@ -31,6 +32,8 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 NCOLS, NROWS, NFIB = 400, 120, 18
 TILT = 0.05
 RN = 10.0
+# ycen fraction; avoid exact multiples of 1/osample, where slitdec's subpixel grid shifts by one
+YC = 1e-3
 KW = dict(osample=6, lambda_sP=0.0, lambda_sL=0.1, maxiter=30, kappa=0)
 PX_MS = 750.0  # m/s per px, ANDES-R-like (R ~ 100k, ~4 px per resolution element)
 
@@ -60,7 +63,7 @@ def extract(im, sd, kern):
     unc = np.sqrt(np.abs(im) + RN**2)
     sc = np.zeros((NCOLS, 2))
     sc[:, 1] = TILT
-    r = charslit.slitdec(im, unc, mask, np.zeros(NCOLS), sc, sd, slitkernel=kern, **KW)
+    r = charslit.slitdec(im, unc, mask, np.full(NCOLS, YC), sc, sd, slitkernel=kern, **KW)
     chi2 = (((im - r["model"]) / unc) ** 2)[:, 20:-20].mean()
     return r, chi2
 
@@ -86,13 +89,16 @@ def main(scenarios=("geometry", "psf_width", "psf_skew", "psf_skew_mild"), peak=
         sc = np.zeros((NCOLS, 2))
         sc[:, 1] = TILT
         uni = frames["uniform"]
-        c1 = sk.selfcal(uni, np.zeros(NCOLS), sc, np.zeros(NROWS), niter=6, fit_k2=False, fit_k3=False, **KW)
-        sd = sk.rows_to_subpix(c1["slitdeltas"], KW["osample"], 0.0)
-        ck = sk.selfcal_lsq(uni, np.zeros(NCOLS), sc, sd, niter=6, rn=RN, **KW)
+        yc = np.full(NCOLS, YC)
+        c1 = sk.selfcal(uni, yc, sc, np.zeros(NROWS), niter=6, fit_k2=False, fit_k3=False, **KW)
+        sd = sk.rows_to_subpix(c1["slitdeltas"], KW["osample"], YC)
+        ck = sk.selfcal_lsq(uni, yc, sc, sd, niter=6, rn=RN, ycen_frac=YC, **KW)
+        cu = sk.selfcal_u(uni, yc, sc, sd, niter=6, rn=RN, **KW)
         variants = {
             "nominal": (np.zeros(NROWS), None),
             "deltas": (sd, None),
             "deltas+kern": (sd, ck["kernel"]),
+            "deltas+kern_u": (sd, cu["kernel"]),
         }
         peaks, half = sk.line_windows(extract(uni, *variants["nominal"])[0]["spectrum"])
         print(f"\n=== {scen}   (kernel selfcal chi2: {[round(x) for x in ck['chi2']]})")
