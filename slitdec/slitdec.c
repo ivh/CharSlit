@@ -25,6 +25,7 @@ int _nrows = 0;
 int _ny = 0;
 int _nx = 0;
 int _osample = 0;
+int _nkz = 1;
 int _n = 0;
 int _nd = 0;
 #else
@@ -33,6 +34,7 @@ int _nd = 0;
 #define _ny ny
 #define _nx nx
 #define _osample osample
+#define _nkz nkz
 #define _n n
 #define _nd nd
 #endif
@@ -40,7 +42,9 @@ int _nd = 0;
 // Define the sizes of each array
 #define MAX_ZETA_X (_ncols)
 #define MAX_ZETA_Y (_nrows)
-#define MAX_ZETA_Z (3 * ((_osample) + 1))
+/* nkz = number of slit-kernel taps (1 without kernel): each geometric deposit
+   expands into one zeta entry per tap */
+#define MAX_ZETA_Z (3 * ((_osample) + 1) * (_nkz))
 #define MAX_ZETA (MAX_ZETA_X * MAX_ZETA_Y * MAX_ZETA_Z)
 #define MAX_MZETA ((_ncols) * (_nrows))
 #define MAX_CRV_X (_ncols)
@@ -425,10 +429,10 @@ double quick_select_percentile(double arr[], unsigned int n, double percentile)
 }
 
 static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
-                     int ncols, int nrows, int osample,
+                     int ncols, int nrows, int osample, int nkz,
                      int x, int iy, int xx, int yy, double w)
 {
-    if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w > 0)
+    if (xx >= 0 && xx < ncols && yy >= 0 && yy < nrows && w != 0)
     {
         const int m = m_zeta[mzeta_index(xx, yy)];
         /* Extreme geometry can feed one pixel from more subpixels than the
@@ -448,6 +452,29 @@ static inline void zeta_add(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
     }
 }
 
+/* Deposit of subpixel (x, iy) into pixel (xx, yy) through the slit kernel
+   of row iy: the pixel then sees (K_iy * sP)[x] = sum_j K_iy[j] sP[x - o_j],
+   o_j = j - nk/2, i.e. one zeta entry per tap with source column x - o_j. */
+static inline void zeta_add_k(zeta_ref *zeta, int *m_zeta, zeta_rng *z_rng,
+                       int ncols, int nrows, int osample, int nkz,
+                       const double *slitkernel, int nk,
+                       int x, int iy, int xx, int yy, double w)
+{
+    if (nk <= 0)
+    {
+        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, x, iy, xx, yy, w);
+        return;
+    }
+    const double *k = slitkernel + (size_t)iy * nk;
+    const int h = nk / 2;
+    for (int j = 0; j < nk; j++)
+    {
+        const int src = x - (j - h);
+        if (k[j] != 0.e0 && src >= 0 && src < ncols)
+            zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, src, iy, xx, yy, w * k[j]);
+    }
+}
+
 int zeta_tensors(
     int ncols,
     int nrows,
@@ -458,6 +485,8 @@ int zeta_tensors(
     int osample,
     double *slitcurve,
     double *slitdeltas,
+    double *slitkernel,
+    int nk,
     zeta_ref *zeta,
     int *m_zeta,
     zeta_rng *z_rng)
@@ -495,6 +524,10 @@ int zeta_tensors(
         where d_y is the offset from the central line ycen.
     slitdeltas : double array of shape (ny,)
         Additional per-subpixel horizontal offsets
+    slitkernel : double array of shape (ny, nk) or NULL
+        Per-subpixel convolution kernel applied to sP (see zeta_add_k)
+    nk : int
+        Number of kernel taps (odd), 0 for no kernel
     zeta : (out) zeta_ref array of shape (ncols, nrows, 3 * (osample + 1))
         Convolution tensor telling the coordinates of subpixels {x, iy} contributing
         to detector pixel {x, y}.
@@ -509,6 +542,7 @@ int zeta_tensors(
     int x, xx, y, yy, ix1, ix2, iy, iy1, iy2;
     double step, delta, dy, w, d1, d2;
 
+    const int nkz = nk > 0 ? nk : 1;
     step = 1.e0 / osample;
 
     /* Clean zeta counts. The zeta entries themselves need no initialization:
@@ -640,11 +674,11 @@ int zeta_tensors(
                     {
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add_k(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, slitkernel, nk, x, iy, xx, yy,
                                  w - fabs(delta - ix1) * w);
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add_k(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, slitkernel, nk, x, iy, xx, yy,
                                  fabs(delta - ix1) * w);
                     }
                 }
@@ -654,11 +688,11 @@ int zeta_tensors(
                     {
                         xx = x + ix2;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add_k(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, slitkernel, nk, x, iy, xx, yy,
                                  fabs(delta - ix1) * w);
                         xx = x + ix1;
                         yy = y + ycen_offset[x] - ycen_offset[xx];
-                        zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy,
+                        zeta_add_k(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, slitkernel, nk, x, iy, xx, yy,
                                  w - fabs(delta - ix1) * w);
                     }
                 }
@@ -666,7 +700,7 @@ int zeta_tensors(
                 {
                     xx = x + ix1;
                     yy = y + ycen_offset[x] - ycen_offset[xx];
-                    zeta_add(zeta, m_zeta, z_rng, ncols, nrows, osample, x, iy, xx, yy, w);
+                    zeta_add_k(zeta, m_zeta, z_rng, ncols, nrows, osample, nkz, slitkernel, nk, x, iy, xx, yy, w);
                 }
             }
             dyc[x] = dy;
@@ -883,6 +917,8 @@ int slitdec(        int ncols,
                     double *ycen,
                     double *slitcurve,
                     double *slitdeltas,
+                    double *slitkernel,
+                    int nk,
                     int osample,
                     double lambda_sP,
                     double lambda_sL,
@@ -922,6 +958,12 @@ int slitdec(        int ncols,
         Slit curvature polynomial coefficients c0..c5 for each column
     slitdeltas : double array of shape (ny,)
         Additional per-subpixel horizontal offsets
+    slitkernel : double array of shape (ny, nk) or NULL
+        Per-subpixel kernel convolved with sP, for a dispersion-direction
+        LSF that varies along the slit. sP then carries the LSF part common
+        to all rows. nk odd, 0 disables (bit-identical to no kernel).
+    nk : int
+        Number of kernel taps
     osample : int
         Subpixel ovsersampling factor
     lambda_sP : double
@@ -951,6 +993,9 @@ int slitdec(        int ncols,
     unsigned int isum;
     int *ycen_offset;
     int y_lower_lim = nrows / 2;
+    if (slitkernel == NULL)
+        nk = 0;
+    const int nkz = nk > 0 ? nk : 1;
 
     // For the solving of the equation system
     double *l_Aij, *l_bj, *p_Aij, *p_bj;
@@ -986,6 +1031,7 @@ int slitdec(        int ncols,
     _nrows = nrows;
     _ny = ny;
     _osample = osample;
+    _nkz = nkz;
     printf("ncols: %d, nrows: %d, ny: %d, osample: %d\n", _ncols, _nrows, _ny, _osample);
 #endif
 
@@ -1023,6 +1069,11 @@ int slitdec(        int ncols,
         delta_x = max(delta_x, tmp);
     }
 
+    /* Kernel taps reach nk/2 further source columns either way. Added to
+       the shift (not max'ed) because a tap acts on top of any shift. */
+    if (nk > 0)
+        delta_x += nk / 2;
+
     /* Upper bound on the width of the sP band: a subpixel shifts by at most
        delta_x columns either way, so two subpixels of one detector pixel span
        at most 2*delta_x. Only used for allocation -- the band actually needed
@@ -1053,6 +1104,8 @@ int slitdec(        int ncols,
                 fast_flat = 0;
                 break;
             }
+    if (nk > 0)
+        fast_flat = 0;
     if (fast_flat)
         for (iy = 0; iy < ny; iy++)
             if (slitdeltas[iy] != 0.e0)
@@ -1100,7 +1153,7 @@ int slitdec(        int ncols,
     if (fast_flat)
         flat_setup(ncols, osample, ycen, k0col, d1col);
     else
-        zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, zeta, m_zeta, z_rng);
+        zeta_tensors(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, slitcurve, slitdeltas, slitkernel, nk, zeta, m_zeta, z_rng);
 
     /* Width of the sP band. p_Aij[x, x'] is nonzero only where some detector
        pixel draws from both columns, so the band is set by the widest source

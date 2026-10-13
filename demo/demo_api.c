@@ -59,6 +59,7 @@ int demo_extract(int ncols, int nrows, double *im,
 
     int ret = slitdec(ncols, nrows, im, pix_unc, mask, ycen,
                       slitcurve, slitdeltas,
+                      NULL, 0 /* no slit kernel */,
                       osample, lambda_sP, lambda_sL, maxiter, kappa,
                       0 /* use_preset */,
                       sP, sL, model, unc, info);

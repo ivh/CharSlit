@@ -22,7 +22,8 @@ nb::dict slitdec_wrapper(
     double lambda_sL,
     int maxiter,
     double kappa,
-    std::optional<nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>> preset_slitfunc
+    std::optional<nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>> preset_slitfunc,
+    std::optional<nb::ndarray<double, nb::ndim<2>, nb::c_contig, nb::device::cpu>> slitkernel
 ) {
     // Get dimensions from input image
     int nrows = im.shape(0);
@@ -91,6 +92,33 @@ nb::dict slitdec_wrapper(
         throw std::runtime_error("slitdeltas must have length nrows or ny = osample * (nrows + 1) + 1");
     }
 
+    // slitkernel: (nrows or ny, nk), nk odd. Rows interpolated to ny like slitdeltas.
+    double* kernel = nullptr;
+    int nk = 0;
+    if (slitkernel.has_value()) {
+        const auto& sk = slitkernel.value();
+        int klen = sk.shape(0);
+        nk = sk.shape(1);
+        if (nk % 2 != 1 || (klen != nrows && klen != ny)) {
+            if (allocated_interp && slitdeltas_interp != nullptr) delete[] slitdeltas_interp;
+            throw std::runtime_error("slitkernel must have shape (nrows or ny, nk) with nk odd");
+        }
+        const double* kd = sk.data();
+        kernel = new double[(size_t)ny * nk];
+        if (klen == ny) {
+            std::memcpy(kernel, kd, (size_t)ny * nk * sizeof(double));
+        } else {
+            for (int i = 0; i < ny; i++) {
+                double pos = i * (nrows - 1.0) / (ny - 1.0);
+                int lo = static_cast<int>(pos);
+                int hi = lo + 1 < nrows ? lo + 1 : nrows - 1;
+                double frac = pos - lo;
+                for (int j = 0; j < nk; j++)
+                    kernel[(size_t)i * nk + j] = (1.0 - frac) * kd[(size_t)lo * nk + j] + frac * kd[(size_t)hi * nk + j];
+            }
+        }
+    }
+
     // Allocate output arrays
     size_t sP_shape[1] = {static_cast<size_t>(ncols)};
     size_t sL_shape[1] = {static_cast<size_t>(ny)};
@@ -138,6 +166,7 @@ nb::dict slitdec_wrapper(
         } else {
             // Free already-allocated buffers before throwing
             if (allocated_interp && slitdeltas_interp != nullptr) delete[] slitdeltas_interp;
+            delete[] kernel;
             delete[] sP; delete[] sL; delete[] model; delete[] unc; delete[] info;
             throw std::runtime_error("preset_slitfunc must have length nrows or ny = osample * (nrows + 1) + 1");
         }
@@ -184,6 +213,8 @@ nb::dict slitdec_wrapper(
         ycen_copy,
         slitcurve_padded,
         slitdeltas_interp,
+        kernel,
+        nk,
         osample,
         lambda_sP,
         lambda_sL,
@@ -201,6 +232,8 @@ nb::dict slitdec_wrapper(
     if (allocated_interp && slitdeltas_interp != nullptr) {
         delete[] slitdeltas_interp;
     }
+
+    delete[] kernel;
 
     // Clean up padded slitcurve
     if (allocated_slitcurve && slitcurve_padded != nullptr) {
@@ -258,6 +291,7 @@ NB_MODULE(charslit, m) {
           nb::arg("maxiter") = 20,
           nb::arg("kappa") = 10.0,
           nb::arg("preset_slitfunc") = nb::none(),
+          nb::arg("slitkernel") = nb::none(),
           "Slit decomposition with slit characterization\n\n"
           "Parameters\n"
           "----------\n"
@@ -290,7 +324,13 @@ NB_MODULE(charslit, m) {
           "    Fixed slit function for single-pass extraction. When given, the\n"
           "    slit-function solve is skipped and only the spectrum is fitted\n"
           "    against this profile. Length nrows is interpolated to ny; the\n"
-          "    preset is normalized to sum osample internally. Default: None.\n\n"
+          "    preset is normalized to sum osample internally. Default: None.\n"
+          "slitkernel : ndarray (nrows or ny, nk), optional\n"
+          "    Per-row kernel (nk odd, taps on the detector-column grid) convolved\n"
+          "    with the spectrum before it is shifted into that slit row, for a\n"
+          "    dispersion-direction LSF that varies along the slit. Tap j acts at\n"
+          "    column offset j - nk//2. The spectrum then carries the LSF part\n"
+          "    common to all rows. Length nrows is interpolated to ny. Default: None.\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"
