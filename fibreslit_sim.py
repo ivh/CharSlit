@@ -18,15 +18,32 @@ def _psf_x(xf, sig, skew_eps, skew_d):
     return g / g.sum()
 
 
-def fibre_stamp(diam, xscale=1.0, shear=0.0, psf_sx=0.8, psf_sy=0.8, skew_eps=0.0, skew_d=0.0, half=10.0):
+def fibre_stamp(diam, xscale=1.0, shear=0.0, psf_sx=0.8, psf_sy=0.8, skew_eps=0.0, skew_d=0.0, half=10.0,
+                psf_rot=0.0, halo_frac=0.0, halo_sx=3.0, halo_sy=3.0):
     """Monochromatic image of one fibre (uniform disk -> ellipse -> PSF), fine grid, unit sum.
 
+    The PSF is separable (x: Gaussian + skew component, y: Gaussian) unless psf_rot
+    (core rotation, radians) or halo_frac (fraction of light in a broad Gaussian halo
+    with widths halo_sx, halo_sy) is set; then a full 2D kernel is used.
     Returns (stamp, half) with the stamp centred on (half, half) px."""
     n = int(2 * half * FINE)
     c = (np.arange(n) + 0.5) / FINE - half
     X, Y = np.meshgrid(c, c)
     u = (X - shear * Y) / xscale
     disk = (u**2 + Y**2) <= (diam / 2) ** 2
+    if psf_rot or halo_frac:
+        ct, st_ = np.cos(psf_rot), np.sin(psf_rot)
+        xr, yr = ct * X + st_ * Y, -st_ * X + ct * Y
+        core = (1 - skew_eps) * np.exp(-0.5 * ((xr / psf_sx) ** 2 + (yr / psf_sy) ** 2))
+        if skew_eps:
+            core += skew_eps * np.exp(-0.5 * (((xr - skew_d) / psf_sx) ** 2 + (yr / psf_sy) ** 2))
+        k = core / core.sum()
+        if halo_frac:
+            h = np.exp(-0.5 * ((X / halo_sx) ** 2 + (Y / halo_sy) ** 2))
+            k = (1 - halo_frac) * k + halo_frac * h / h.sum()
+        s = fftconvolve(disk.astype(float), k, mode="same")
+        s[s < 0] = 0
+        return s / s.sum()
     px = _psf_x(c, psf_sx, skew_eps, skew_d)
     py = np.exp(-0.5 * (c / psf_sy) ** 2)
     py /= py.sum()
@@ -61,7 +78,8 @@ def render(ncols, nrows, fibres, lines, tilt=0.0, ycentre=None, continuum=0.0, h
     pad = int(half * FINE) + 2
     img = np.zeros((H + 2 * pad, W + 2 * pad))
     for f in fibres:
-        kw = {k: f[k] for k in ("xscale", "shear", "psf_sx", "psf_sy", "skew_eps", "skew_d") if k in f}
+        kw = {k: f[k] for k in ("xscale", "shear", "psf_sx", "psf_sy", "skew_eps", "skew_d", "psf_rot", "halo_frac",
+                                "halo_sx", "halo_sy") if k in f}
         st = fibre_stamp(f["diam"], half=half, **kw) * f["flux"]
         n = st.shape[0]
         oy = int(round(f["yc"] * FINE)) - n // 2 + pad
