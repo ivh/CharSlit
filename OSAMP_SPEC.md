@@ -1,7 +1,8 @@
 # osamp_spec: dispersion-direction oversampling
 
-Status: landed in `slitdec/`, re-implemented on top of the zeta-only /
-dense-window solver (the speed rewrite that removed the `xi` tensor).
+Status: landed in `slitdec/`, re-implemented on top of master's Round 3
+solver (y-major zeta, flat fast path, measured sP band width; rebased
+2026-10-15).
 `osamp_spec=1` is bit-identical to master: the full golden regression
 suite (`tests/test_regression.py`, rtol 1e-10) passes unchanged, and the
 committed `tests/golden/osamp_spec1.npz` matches at rtol 1e-9.
@@ -21,16 +22,15 @@ slit.
 
 ## Forward-model change
 
-The geometry now lives in a single `zeta` tensor (subpixels contributing
-to each detector pixel; the inverse `xi` tensor is gone). `zeta_tensors`
-loops over `x_fine = 0..ncols_fine-1`, with `x = x_fine / osamp_spec` the
-detector column driving `slitcurve[x]`, `ycen[x]`, `ycen_offset[x]`
-(unchanged semantics). Each `zeta` entry stores the fine bin index
-`x_fine` (which is just `x` when `s == 1`). For each fine subpixel at slit
-row `iy`:
+The geometry lives in a single y-major `zeta` tensor (subpixels
+contributing to each detector pixel). `zeta_tensors` keeps master's
+row-outer loop over detector `(y, x)`; for each slit subpixel `iy` the
+shift `delta` is computed once from `slitcurve[x]`, `ycen[x]`, and at
+`s > 1` deposited for each of the `s` fine bins `x_fine = x*s + k`. Each
+`zeta` entry stores the fine bin index `x_fine` (which is just `x` when
+`s == 1`). For fine bin `k` at slit row `iy`:
 
-- horizontal extent before tilt: `[x_off_frac, x_off_frac + 1/s)` with
-  `x_off_frac = (x_fine - x*s)/s`
+- horizontal extent before tilt: `[k/s, (k+1)/s)` within column `x`
 - after tilt: `[x_off_frac + delta, x_off_frac + delta + 1/s)`
 - deposited into detector columns `floor(L)` and `floor(R)` with overlap
   weights summing to `1/s`
@@ -41,21 +41,31 @@ coarse deposit kept verbatim (`ix1 = (int)delta`, `ix2 = ix1 + signum`),
 so the per-entry float values and the `zeta` append order are unchanged
 and the s=1 result stays bit-identical to master. The `s > 1` path uses
 the `floor(L)/floor(R)` split above. The downstream `sP` normal-matrix
-fill (master's dense-window merge, row-major band layout) is generalized
-by parameter only — the band centre/threshold `2*delta_x` becomes
-`delta_x_fine = (nx-1)/2`, which equals `2*delta_x` at `s == 1`.
+fill (master's dense-window merge, row-major band layout) runs unchanged
+on fine-bin keys. The flat-geometry fast path is used only at `s == 1`:
+with zero shift everywhere the fine bins of one column are exactly
+degenerate anyway (see below).
 
 ## Matrix / solver
 
-- `sP` normal matrix is `(ncols_fine, nx)` with
-  `nx = 4*delta_x*osamp_spec + 2*osamp_spec - 1`
+- `sP` normal matrix is `(ncols_fine, nx)`, `nx = 2*bx + 1`, with `bx`
+  measured after the geometry build as the widest fine-bin span of any
+  single detector pixel (master's approach), raised to `osamp_spec - 1`
+  when `lambda_fringe > 0` (the block operator couples all fine bins of a
+  column) and to 1 when `lambda_sP > 0`. Allocation uses the upper bound
+  `nx_alloc = 4*delta_x*osamp_spec + 2*osamp_spec - 1`
 - first-difference smoothing stencil `(-1, 2, -1)` applied between
   adjacent fine bins, weight `lambda_sP`
 - `bandsol(p_Aij, p_bj, ncols_fine, nx)` on the fine grid
 - boundary zeroing: first / last `delta_x * osamp_spec` fine bins
 
-Sanity guard: `if (nx > ncols_fine) return -1` (was `ncols` — the old
-check misfired for small images at `osamp_spec >= 4`; fixed).
+Sanity guard: `if (nx_alloc > ncols_fine)` return status -2 (comparing
+against `ncols` misfired for small images at `osamp_spec >= 4`).
+
+Degenerate case: `s > 1` with `lambda_fringe = 0` on geometry with no
+shift at all (or no tilt-phase diversity) makes the normal matrix
+singular; the spectrum comes back NaN and is now flagged status -3
+(before the rebase it was silently reported as converged, status 1).
 
 ## Tested
 
@@ -134,8 +144,12 @@ parts).
 Caller is responsible for picking a value appropriate to their
 `osamp_spec`. This is an intentional design choice from the plan.
 
-**3. Band-solver cost grows as `ncols_fine * nx² ≈ osamp_spec³`.**
-Acceptable for `osamp_spec ≤ 4`. Memory grows as `osamp_spec²`.
+**3. Cost grows roughly as `osamp_spec²` per iteration.** zeta entries
+scale with `s`, the sP-fill pairs per pixel and the measured band with
+`s²`. Measured per iteration (Oct 2026): ANDES_R_FP1 404x2556 62 / 112 /
+293 ms at s = 1 / 2 / 3; CRIRES2 18 / 35 / 93 ms. zeta memory grows as
+`(s+1)` per pixel (`MAX_ZETA_Z`); full 2048x2048 frames at s = 3 take
+~1 s per iteration and several GB. Use swaths.
 
 ## Design decisions
 
