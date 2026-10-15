@@ -7,6 +7,9 @@ of a unit line through fibre f alone, rendered by fibreslit_sim), so data, maske
 and SP's A matrix come from one consistent forward model.
 
 Methods
+  single    each fibre alone: profile-weighted optimal extraction, neighbours ignored.
+  peel      DRL v2.0 Fig 14: single, then subtract the neighbours' models (their
+            single-pass spectra times their masked-flat profiles) and re-extract.
   column    per-column weighted LS for all fibre amplitudes with fixed profiles
             P_f(y; x) from per-fibre (masked) flats. Output = spectrum * fibre LSF.
   SP exact  A built from the true T_f; f-hat smoothed with one common Gaussian.
@@ -73,6 +76,20 @@ def extract_column(im, Tflat, w):
     return out
 
 
+def extract_single(im, Tflat, w, sub=None):
+    P = Tflat / Tflat.sum(1, keepdims=True)
+    if sub is None:
+        sub = np.zeros((len(P),) + im.shape)
+    return np.array([(P[f] * w * (im - sub[f])).sum(0) / (P[f] ** 2 * w).sum(0) for f in range(len(P))])
+
+
+def extract_peel(im, Tflat, w):
+    P = Tflat / Tflat.sum(1, keepdims=True)
+    s1 = extract_single(im, Tflat, w)
+    model = s1[:, None, :] * P
+    return extract_single(im, Tflat, w, sub=model.sum(0)[None] - model)
+
+
 def build_A(T):
     nfib, nrows, _ = T.shape
     rows, cols, vals = [], [], []
@@ -130,7 +147,9 @@ def run(geom, truth, errors, nfib=12, label=""):
     Tflat = np.array([image_of(T[f], np.ones(NC)) for f in range(nfib)])
     G = np.exp(-0.5 * (np.arange(-6, 7) / 1.2) ** 2)
     G /= G.sum()
-    res = {"column (masked-flat profiles)": leak_metrics(extract_column(im, Tflat, w), nfib)}
+    res = {"single fibre (neighbours ignored)": leak_metrics(extract_single(im, Tflat, w), nfib)}
+    res["peel (DRL Fig 14)"] = leak_metrics(extract_peel(im, Tflat, w), nfib)
+    res["column (masked-flat profiles)"] = leak_metrics(extract_column(im, Tflat, w), nfib)
     res["SP, exact PSF"] = leak_metrics(extract_sp(im, T, w), nfib, G)
     for name, psf in errors.items():
         Te, _ = templates(geom, psf, nfib)
