@@ -405,23 +405,29 @@ the first fibre's PSF for all fibres even though the ANDES HDFs store per-fibre 
 (R band: |dPSF|/2 = 0.016 fibre 1 vs 66). The fibre-geometry part is in the frames; the
 PSF-variation part is not.
 
-## Pixel weights (`weighted=True`)
+## Pixel weights (`weights=`)
 
 Historically slitdec ignored `pix_unc`: the sL and sP solves were unweighted least squares, so a
-row entered the spectrum with weight ~sL. When the line shape varies along the slit (fibre-chord
-rows: on ESPRESSO 2x1 the slice-centre rows are 1.92 px sigma wide, the edges 1.4-1.6 px), that
-weighting favours the bright, wide rows: the spectrum came out 0.13 px^2 broader in variance than a
-column sum or espdr's Horne extraction (R 4-5 % low). Synthetic frames with identical rows cannot
-show this.
+row entered the spectrum with weight ~sL and its line profile with ~sL^2. When the line shape
+varies along the slit (fibre-chord rows: on ESPRESSO 2x1 the slice-centre rows are 1.92 px sigma
+wide, the edges 1.4-1.6 px), that favours the bright, wide rows: the spectrum came out 0.13 px^2
+broader in variance than a column sum or espdr's Horne extraction (R 4-5 % low). Synthetic frames
+with identical rows cannot show this.
 
-`weighted=True` weights every pixel by 1/pix_unc^2 (normalised to mean 1 over usable pixels, so
-lambda_sL keeps its meaning) in both solves, in the flat and the general path. Off by default:
-unweighted results stay bit-identical (golden suite passes).
+`weights=` (all normalised to mean 1 over usable pixels, so lambda_sL keeps its meaning; applied
+in both solves, flat and general path):
+- `"none"` (default): the historic solution, bit-identical (golden suite passes).
+- `"unc"`: static 1/pix_unc^2. Uncertainties computed from the noisy data are correlated with the
+  noise and distort line profiles (real LFC swaths: 1D LSF-fit chi2 ~29 -> ~170).
+- `"model"`: first iteration unweighted, then 1/(max(model, 0) + noise_floor), refreshed every
+  iteration. Unit-agnostic: the model gives the shape of the variance (a gain is a global factor
+  and drops out); `noise_floor` is the read-noise variance in the units of im. Default
+  (None): 5th percentile of pix_unc^2 over usable pixels, the only number taken from pix_unc.
+  On ESPRESSO four-slice swaths: espdr-level resolution, cleanest profiles, ~1.1x the
+  unweighted run time (a Python two-pass with fixed model weights costs 1.8x).
 
-**Pass model-based uncertainties.** Weights from the data themselves are correlated with the noise
-and distort the line profiles (on real LFC swaths: R looks 1 % higher but the 1D LSF-fit chi2 goes
-from ~29 to ~170). Use two passes: unweighted, then pix_unc = sqrt(max(model, 0) + RON^2) with
-weighted=True. That gives espdr's resolution and the cleanest profiles (chi2 24.5).
+A residual-based floor (variance of the faint pixels after an unweighted pass) does not work on
+real data: the faint pixels are gaps and slit edges, dominated by unmodelled scattered light.
 
 ## Polynomial Degree Handling
 

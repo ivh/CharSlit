@@ -911,6 +911,22 @@ static void flat_unc(int ncols, int nrows,
 }
 
 
+/* Scale positive weights to mean 1 */
+static void normalise_weights(double *w, long n)
+{
+    double wsum = 0.e0;
+    long nw = 0;
+    for (long i = 0; i < n; i++)
+        if (w[i] > 0.e0)
+        {
+            wsum += w[i];
+            nw++;
+        }
+    if (nw > 0 && wsum > 0.e0)
+        for (long i = 0; i < n; i++)
+            w[i] *= nw / wsum;
+}
+
 int slitdec(        int ncols,
                     int nrows,
                     double *im,
@@ -927,7 +943,8 @@ int slitdec(        int ncols,
                     int maxiter,
                     double kappa,
                     int use_preset,
-                    int weighted,
+                    int weight_mode,
+                    double noise_floor,
                     double *sP,
                     double *sL,
                     double *model,
@@ -1153,28 +1170,44 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
-    /* Optional pixel weights 1/unc^2, normalised to mean 1 over the usable pixels so that the
-       relative regularisation (lambda_sL scales with the matrix diagonal) keeps its meaning.
-       Unweighted (NULL) reproduces the historic solution bit for bit. */
-    double *wpix = NULL;
-    if (weighted)
+    /* Optional pixel weights, normalised to mean 1 over the usable pixels so that the relative
+       regularisation (lambda_sL scales with the matrix diagonal) keeps its meaning.
+         weight_mode 0: unweighted (wpix NULL); reproduces the historic solution bit for bit.
+         weight_mode 1: static 1/pix_unc^2.
+         weight_mode 2: 1/(max(model, 0) + noise_floor), refreshed from the model after every
+                        iteration; the first iteration is unweighted. The model sets the shape
+                        of the variance (photon noise, any units: a gain is a global factor and
+                        drops out), noise_floor the read-noise level in the units of im. With
+                        noise_floor < 0 it is taken as the 5th percentile of pix_unc^2 over the
+                        usable pixels; only that one number is taken from pix_unc.
+       wpix is what the fills use; wbuf owns the memory. */
+    double *wbuf = NULL, *wpix = NULL;
+    const long npix = (long)nrows * ncols;
+    if (weight_mode == 1)
     {
-        double wsum = 0.e0;
-        long nw = 0;
-        wpix = malloc((size_t)nrows * ncols * sizeof(double));
-        for (long i = 0; i < (long)nrows * ncols; i++)
+        wbuf = malloc((size_t)npix * sizeof(double));
+        for (long i = 0; i < npix; i++)
         {
             const double u = pix_unc[i];
-            wpix[i] = (mask[i] && isfinite(u) && u > 0.e0) ? 1.e0 / (u * u) : 0.e0;
-            if (wpix[i] > 0.e0)
-            {
-                wsum += wpix[i];
-                nw++;
-            }
+            wbuf[i] = (mask[i] && isfinite(u) && u > 0.e0) ? 1.e0 / (u * u) : 0.e0;
         }
-        if (nw > 0)
-            for (long i = 0; i < (long)nrows * ncols; i++)
-                wpix[i] *= nw / wsum;
+        normalise_weights(wbuf, npix);
+        wpix = wbuf;
+    }
+    else if (weight_mode == 2)
+    {
+        wbuf = malloc((size_t)npix * sizeof(double));
+        if (!(noise_floor >= 0.e0))
+        {
+            long n = 0;
+            for (long i = 0; i < npix; i++)
+            {
+                const double u = pix_unc[i];
+                if (mask[i] && isfinite(u) && u > 0.e0)
+                    wbuf[n++] = u * u;
+            }
+            noise_floor = n > 0 ? quick_select_percentile(wbuf, n, 5.0) : 0.e0;
+        }
     }
 
     if (fast_flat)
@@ -1544,6 +1577,15 @@ int slitdec(        int ncols,
             }
         }
 
+        /* Model-variance weights for the next iteration */
+        if (weight_mode == 2)
+        {
+            for (long i = 0; i < npix; i++)
+                wbuf[i] = mask[i] ? 1.e0 / (fmax(model[i], 0.e0) + noise_floor) : 0.e0;
+            normalise_weights(wbuf, npix);
+            wpix = wbuf;
+        }
+
         /* With a preset sL and no outlier rejection the sP solve does not
            depend on the previous iteration: one pass is exact. sP_change
            still holds the jump from the initial guess, which says nothing
@@ -1709,7 +1751,7 @@ int slitdec(        int ncols,
     }
 
     free(sP_old);
-    free(wpix);
+    free(wbuf);
     free(sP_diff);
     free(norm_sq);
     free(l_Aij);
