@@ -1629,11 +1629,12 @@ int slitdec(        int ncols,
         /* With a preset sL and no outlier rejection the sP solve does not
            depend on the previous iteration: one pass is exact. sP_change
            still holds the jump from the initial guess, which says nothing
-           about convergence here, so report 0. */
-        if (use_preset && kappa <= 0)
+           about convergence here, so report 0. With model or flux weights the
+           first pass is unweighted and sets the weights: one more pass. */
+        if (use_preset && kappa <= 0 && (weight_mode < 2 || iter > 0))
         {
             sP_change = 0;
-            iter = 1;
+            iter = weight_mode < 2 ? 1 : 2;
             break;
         }
 

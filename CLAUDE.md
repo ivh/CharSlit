@@ -435,6 +435,13 @@ with S/N (R -4..5 % from bright to read-noise limited, ending at the unweighted 
 and `"flux"` give S/N-independent LSFs (broad and sharp), costing 8 % in variance on bright data
 (`"none"`) or 10/54/109 % at k = 1e-2/1e-3/1e-4 (`"flux"`).
 
+`"model"` uses slitdec's own model, which knows only the object being decomposed. Light from
+anything else in the swath (neighbour fibres in an IFU peel crop) looks faint to it and gets large
+weights: on the synthetic IFU frames the kernel-peel leak got worse (R 1.74 -> 2.74 %), while
+true-variance `"unc"` weights improved it (R 0.58-0.89 %, YJH 0.27-0.55 %). For crowded swaths pass
+uncertainties from a model of everything with `"unc"`. With a preset slit function and kappa=0,
+`"model"`/`"flux"` run one extra pass (the first one is unweighted).
+
 A residual-based floor (variance of the faint pixels after an unweighted pass) does not work on
 real data: the faint pixels are gaps and slit edges, dominated by unmodelled scattered light.
 
