@@ -426,6 +426,15 @@ in both solves, flat and general path):
   On ESPRESSO four-slice swaths: espdr-level resolution, cleanest profiles, ~1.1x the
   unweighted run time (a Python two-pass with fixed model weights costs 1.8x).
 
+- `"flux"`: first iteration unweighted, then 1/v with v the pixel's slit-function value
+  (model / spectrum, floored at 1e-3 of max), refreshed every iteration. Rows enter sP in
+  proportion to their flux at any S/N: the bright-source LSF, independent of S/N.
+
+Trade-off (ESPRESSO series, simulated faintness k): `"model"` is noise-optimal but its LSF moves
+with S/N (R -4..5 % from bright to read-noise limited, ending at the unweighted value); `"none"`
+and `"flux"` give S/N-independent LSFs (broad and sharp), costing 8 % in variance on bright data
+(`"none"`) or 10/54/109 % at k = 1e-2/1e-3/1e-4 (`"flux"`).
+
 A residual-based floor (variance of the faint pixels after an unweighted pass) does not work on
 real data: the faint pixels are gaps and slit edges, dominated by unmodelled scattered light.
 

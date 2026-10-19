@@ -36,8 +36,10 @@ nb::dict slitdec_wrapper(
         weight_mode = 1;
     else if (weights == "model")
         weight_mode = 2;
+    else if (weights == "flux")
+        weight_mode = 3;
     else
-        throw std::runtime_error("weights must be 'none', 'unc' or 'model'");
+        throw std::runtime_error("weights must be 'none', 'unc', 'model' or 'flux'");
     // Get dimensions from input image
     int nrows = im.shape(0);
     int ncols = im.shape(1);
@@ -349,7 +351,7 @@ NB_MODULE(charslit, m) {
           "    dispersion-direction LSF that varies along the slit. Tap j acts at\n"
           "    column offset j - nk//2. The spectrum then carries the LSF part\n"
           "    common to all rows. Length nrows is interpolated to ny. Default: None.\n\n"
-          "weights : {'none', 'unc', 'model'}, optional\n"
+          "weights : {'none', 'unc', 'model', 'flux'}, optional\n"
           "    Pixel weights in the sL and sP solves (normalised to mean 1).\n"
           "    'none': unweighted least squares, the historic behaviour: every row\n"
           "    enters sP with weight ~sL, so its line profile counts with ~sL^2.\n"
@@ -358,7 +360,11 @@ NB_MODULE(charslit, m) {
           "    'model': first iteration unweighted, then 1/(max(model, 0) +\n"
           "    noise_floor) refreshed every iteration. Unit-agnostic: the model sets\n"
           "    the shape (photon noise; a gain drops out), noise_floor the read-noise\n"
-          "    level. Default 'none'.\n"
+          "    level.\n"
+          "    'flux': first iteration unweighted, then 1/v with v the slit-function\n"
+          "    value of the pixel (floored at 1e-3 of its maximum). Rows enter sP in\n"
+          "    proportion to their flux at any S/N: the bright-source LSF, independent\n"
+          "    of S/N, at some noise cost for faint data. No units. Default 'none'.\n"
           "noise_floor : float, optional\n"
           "    Read-noise variance in the units of im (e.g. RON^2), for\n"
           "    weights='model'. Default None: the 5th percentile of pix_unc^2 over\n"

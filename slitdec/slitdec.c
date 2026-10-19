@@ -1175,7 +1175,11 @@ int slitdec(        int ncols,
          weight_mode 0: unweighted (wpix NULL); reproduces the historic solution bit for bit.
          weight_mode 1: static 1/pix_unc^2.
          weight_mode 2: 1/(max(model, 0) + noise_floor), refreshed from the model after every
-                        iteration; the first iteration is unweighted. The model sets the shape
+                        iteration; the first iteration is unweighted.
+         weight_mode 3: 1/v with v the slit-function value of the pixel (model / spectrum),
+                        floored at 1e-3 of its maximum, refreshed like mode 2. Rows then
+                        enter sP in proportion to their flux at any S/N: the photon-limited
+                        mixture without the S/N dependence of mode 2. No units involved. The model sets the shape
                         of the variance (photon noise, any units: a gain is a global factor and
                         drops out), noise_floor the read-noise level in the units of im. With
                         noise_floor < 0 it is taken as the 5th percentile of pix_unc^2 over the
@@ -1194,6 +1198,8 @@ int slitdec(        int ncols,
         normalise_weights(wbuf, npix);
         wpix = wbuf;
     }
+    else if (weight_mode == 3)
+        wbuf = malloc((size_t)npix * sizeof(double));
     else if (weight_mode == 2)
     {
         wbuf = malloc((size_t)npix * sizeof(double));
@@ -1582,6 +1588,40 @@ int slitdec(        int ncols,
         {
             for (long i = 0; i < npix; i++)
                 wbuf[i] = mask[i] ? 1.e0 / (fmax(model[i], 0.e0) + noise_floor) : 0.e0;
+            normalise_weights(wbuf, npix);
+            wpix = wbuf;
+        }
+        else if (weight_mode == 3)
+        {
+            /* slit-function value v of each pixel from the current sL */
+            if (fast_flat)
+            {
+                double *A = flat_scratch, *B = A + osample + 1;
+                for (y = 0; y < nrows; y++)
+                {
+                    flat_row_AB(y, osample, sL, A, B);
+                    for (x = 0; x < ncols; x++)
+                        wbuf[im_index(x, y)] = A[k0col[x]] + d1col[x] * B[k0col[x]];
+                }
+            }
+            else
+                for (y = 0; y < nrows; y++)
+                    for (x = 0; x < ncols; x++)
+                    {
+                        const zeta_ref *zrow = &zeta[zeta_index(x, y, 0)];
+                        const int mz = m_zeta[mzeta_index(x, y)];
+                        double acc = 0.;
+                        for (m = 0; m < mz; m++)
+                            acc += sL[zrow[m].iy] * zrow[m].w;
+                        wbuf[im_index(x, y)] = acc;
+                    }
+            double vmax = 0.e0;
+            for (long i = 0; i < npix; i++)
+                if (mask[i] && wbuf[i] > vmax)
+                    vmax = wbuf[i];
+            const double vfloor = 1.e-3 * vmax;
+            for (long i = 0; i < npix; i++)
+                wbuf[i] = (mask[i] && vmax > 0.e0) ? 1.e0 / fmax(wbuf[i], vfloor) : 0.e0;
             normalise_weights(wbuf, npix);
             wpix = wbuf;
         }
