@@ -753,7 +753,7 @@ static void flat_setup(int ncols, int osample, const double *ycen,
    be a partial slice (lo = 0 with the full matrices for the sequential
    call). */
 static void flat_fill_sL(int ncols, int y0, int y1, int osample,
-                         const double *im, const unsigned char *mask,
+                         const double *im, const unsigned char *mask, const double *wpix,
                          const double *sP, const int *k0col, const double *d1col,
                          double *scratch, int lo, double *l_Aij, double *l_bj)
 {
@@ -778,8 +778,9 @@ static void flat_fill_sL(int ncols, int y0, int y1, int osample,
                 continue;
             const int c = k0col[x] + nc * (x & 3);
             const double d = d1col[x];
-            const double a = sP[x] * sP[x];
-            const double b = imrow[x] * sP[x];
+            const double wv = wpix ? wpix[(size_t)y * ncols + x] : 1.e0;
+            const double a = wv * sP[x] * sP[x];
+            const double b = wv * imrow[x] * sP[x];
             M0[c] += a;
             M1[c] += a * d;
             M2[c] += a * d * d;
@@ -847,7 +848,7 @@ static void flat_row_AB(int y, int osample, const double *sL,
    the matrix is purely diagonal (band offset bx, which is 0 unless
    lambda_sP > 0 forces a minimum band of 1). */
 static void flat_fill_sP(int ncols, int nrows, int osample, int bx, int nx,
-                         const double *im, const unsigned char *mask,
+                         const double *im, const unsigned char *mask, const double *wpix,
                          const double *sL, const int *k0col, const double *d1col,
                          double *scratch, double *p_Aij, double *p_bj)
 {
@@ -862,8 +863,9 @@ static void flat_fill_sP(int ncols, int nrows, int osample, int bx, int nx,
             if (!mrow[x])
                 continue;
             const double v = A[k0col[x]] + d1col[x] * B[k0col[x]];
-            p_Aij[(size_t)x * nx + bx] += v * v;
-            p_bj[x] += imrow[x] * v;
+            const double wv = wpix ? wpix[(size_t)y * ncols + x] : 1.e0;
+            p_Aij[(size_t)x * nx + bx] += wv * v * v;
+            p_bj[x] += wv * imrow[x] * v;
         }
     }
 }
@@ -925,6 +927,7 @@ int slitdec(        int ncols,
                     int maxiter,
                     double kappa,
                     int use_preset,
+                    int weighted,
                     double *sP,
                     double *sL,
                     double *model,
@@ -1150,6 +1153,30 @@ int slitdec(        int ncols,
         ycen[x] = ycen[x] - ycen_offset[x];
     }
     
+    /* Optional pixel weights 1/unc^2, normalised to mean 1 over the usable pixels so that the
+       relative regularisation (lambda_sL scales with the matrix diagonal) keeps its meaning.
+       Unweighted (NULL) reproduces the historic solution bit for bit. */
+    double *wpix = NULL;
+    if (weighted)
+    {
+        double wsum = 0.e0;
+        long nw = 0;
+        wpix = malloc((size_t)nrows * ncols * sizeof(double));
+        for (long i = 0; i < (long)nrows * ncols; i++)
+        {
+            const double u = pix_unc[i];
+            wpix[i] = (mask[i] && isfinite(u) && u > 0.e0) ? 1.e0 / (u * u) : 0.e0;
+            if (wpix[i] > 0.e0)
+            {
+                wsum += wpix[i];
+                nw++;
+            }
+        }
+        if (nw > 0)
+            for (long i = 0; i < (long)nrows * ncols; i++)
+                wpix[i] *= nw / wsum;
+    }
+
     if (fast_flat)
         flat_setup(ncols, osample, ycen, k0col, d1col);
     else
@@ -1219,7 +1246,7 @@ int slitdec(        int ncols,
            differs from the historic xi-centric loop only at the rounding
            level. */
         if (fast_flat)
-            flat_fill_sL(ncols, 0, nrows, osample, im, mask, sP, k0col, d1col,
+            flat_fill_sL(ncols, 0, nrows, osample, im, mask, wpix, sP, k0col, d1col,
                          flat_scratch, 0, l_Aij, l_bj);
         else
         /* Row-outer fill: the band rows touched by one detector row span
@@ -1237,6 +1264,7 @@ int slitdec(        int ncols,
                     continue;
                 const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
                 const double imv = im[im_index(xx, yy)];
+                const double wv = wpix ? wpix[im_index(xx, yy)] : 1.e0;
                 /* Merge entries sharing the same subpixel index iy: only the
                    summed weight enters both the matrix and the RHS. The iy of
                    one pixel span at most 2*osample+1 indices (the band width
@@ -1258,7 +1286,7 @@ int slitdec(        int ncols,
                        actual keys are zero and add exactly nothing. */
                     for (m = 0; m <= rng; m++)
                     {
-                        const double um = zw[m];
+                        const double um = wv * zw[m];
                         const double *restrict uv = zw + m;
                         double *restrict arow = &l_Aij[laij_index(k0 + m, 2 * osample)];
                         const int dmax = rng - m;
@@ -1293,7 +1321,8 @@ int slitdec(        int ncols,
                 {
                     iy = zk[m];
                     const double um = zw[m];
-                    l_Aij[laij_index(iy, 2 * osample)] += um * um;
+                    const double wum = wv * um;
+                    l_Aij[laij_index(iy, 2 * osample)] += wum * um;
                     for (n = m + 1; n < nk; n++)
                     {
                         const int iyn = zk[n];
@@ -1304,9 +1333,9 @@ int slitdec(        int ncols,
                            row's band (or past the array). Drop them. */
                         if (d > 2 * osample)
                             continue;
-                        l_Aij[laij_index(lo, d + 2 * osample)] += zw[n] * um;
+                        l_Aij[laij_index(lo, d + 2 * osample)] += zw[n] * wum;
                     }
-                    l_bj[lbj_index(iy)] += imv * um;
+                    l_bj[lbj_index(iy)] += imv * wum;
                 }
             }
         }
@@ -1382,7 +1411,7 @@ int slitdec(        int ncols,
 
         /* Pixel-centric fill, see comment at the slit function SLE above */
         if (fast_flat)
-            flat_fill_sP(ncols, nrows, osample, bx, nx, im, mask, sL,
+            flat_fill_sP(ncols, nrows, osample, bx, nx, im, mask, wpix, sL,
                          k0col, d1col, flat_scratch, p_Aij, p_bj);
         else
         /* Row-outer fill, see the sL fill above. For this system the band
@@ -1397,6 +1426,7 @@ int slitdec(        int ncols,
                     continue;
                 const zeta_ref *zrow = &zeta[zeta_index(xx, yy, 0)];
                 const double imv = im[im_index(xx, yy)];
+                const double wv = wpix ? wpix[im_index(xx, yy)] : 1.e0;
                 /* Merge entries sharing the same source column x; with small
                    curvature this collapses the list to just a few entries.
                    Sources span at most bx+1 columns -- that is how the band
@@ -1414,7 +1444,7 @@ int slitdec(        int ncols,
                    every pixel by construction, so no fallback is needed. */
                 for (m = 0; m <= rng; m++)
                 {
-                    const double um = zw[m];
+                    const double um = wv * zw[m];
                     const double *restrict uv = zw + m;
                     double *restrict arow = &p_Aij[paij_index(k0 + m, bx)];
                     const int dmax = rng - m;
@@ -1679,6 +1709,7 @@ int slitdec(        int ncols,
     }
 
     free(sP_old);
+    free(wpix);
     free(sP_diff);
     free(norm_sq);
     free(l_Aij);

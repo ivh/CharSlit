@@ -23,7 +23,8 @@ nb::dict slitdec_wrapper(
     int maxiter,
     double kappa,
     std::optional<nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>> preset_slitfunc,
-    std::optional<nb::ndarray<double, nb::ndim<2>, nb::c_contig, nb::device::cpu>> slitkernel
+    std::optional<nb::ndarray<double, nb::ndim<2>, nb::c_contig, nb::device::cpu>> slitkernel,
+    bool weighted
 ) {
     // Get dimensions from input image
     int nrows = im.shape(0);
@@ -221,6 +222,7 @@ nb::dict slitdec_wrapper(
         maxiter,
         kappa,
         use_preset,
+        weighted ? 1 : 0,
         sP,
         sL,
         model,
@@ -292,14 +294,16 @@ NB_MODULE(charslit, m) {
           nb::arg("kappa") = 10.0,
           nb::arg("preset_slitfunc") = nb::none(),
           nb::arg("slitkernel") = nb::none(),
+          nb::arg("weighted") = false,
           "Slit decomposition with slit characterization\n\n"
           "Parameters\n"
           "----------\n"
           "im : ndarray (nrows, ncols)\n"
           "    Main input image to be decomposed\n"
           "pix_unc : ndarray (nrows, ncols)\n"
-          "    Pixel error map. Currently unused by the algorithm; output\n"
-          "    uncertainties are estimated from the data - model residuals.\n"
+          "    Pixel error map. Used as 1/pix_unc^2 weights in the solve only when\n"
+          "    weighted=True; output uncertainties are estimated from the data - model\n"
+          "    residuals either way.\n"
           "mask : ndarray (nrows, ncols), uint8\n"
           "    Pixel mask (will be modified by the algorithm)\n"
           "ycen : ndarray (ncols,)\n"
@@ -331,6 +335,11 @@ NB_MODULE(charslit, m) {
           "    dispersion-direction LSF that varies along the slit. Tap j acts at\n"
           "    column offset j - nk//2. The spectrum then carries the LSF part\n"
           "    common to all rows. Length nrows is interpolated to ny. Default: None.\n\n"
+          "weighted : bool, optional\n"
+          "    Weight each pixel by 1/pix_unc^2 (normalised to mean 1) in the sL and sP\n"
+          "    solves. Unweighted, every row enters sP with weight ~sL, so rows whose line\n"
+          "    shape differs from the mean (e.g. fibre-chord rows) bias the spectrum's LSF\n"
+          "    toward the bright rows. Default False (historic behaviour).\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"

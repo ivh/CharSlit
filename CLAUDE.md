@@ -405,6 +405,24 @@ the first fibre's PSF for all fibres even though the ANDES HDFs store per-fibre 
 (R band: |dPSF|/2 = 0.016 fibre 1 vs 66). The fibre-geometry part is in the frames; the
 PSF-variation part is not.
 
+## Pixel weights (`weighted=True`)
+
+Historically slitdec ignored `pix_unc`: the sL and sP solves were unweighted least squares, so a
+row entered the spectrum with weight ~sL. When the line shape varies along the slit (fibre-chord
+rows: on ESPRESSO 2x1 the slice-centre rows are 1.92 px sigma wide, the edges 1.4-1.6 px), that
+weighting favours the bright, wide rows: the spectrum came out 0.13 px^2 broader in variance than a
+column sum or espdr's Horne extraction (R 4-5 % low). Synthetic frames with identical rows cannot
+show this.
+
+`weighted=True` weights every pixel by 1/pix_unc^2 (normalised to mean 1 over usable pixels, so
+lambda_sL keeps its meaning) in both solves, in the flat and the general path. Off by default:
+unweighted results stay bit-identical (golden suite passes).
+
+**Pass model-based uncertainties.** Weights from the data themselves are correlated with the noise
+and distort the line profiles (on real LFC swaths: R looks 1 % higher but the 1D LSF-fit chi2 goes
+from ~29 to ~170). Use two passes: unweighted, then pix_unc = sqrt(max(model, 0) + RON^2) with
+weighted=True. That gives espdr's resolution and the cleanest profiles (chi2 24.5).
+
 ## Polynomial Degree Handling
 
 The codebase supports polynomial degrees 1-5 for fitting slit curvature. This flexibility is achieved through a pragmatic approach:

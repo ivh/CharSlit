@@ -61,7 +61,7 @@ int demo_extract(int ncols, int nrows, double *im,
                       slitcurve, slitdeltas,
                       NULL, 0 /* no slit kernel */,
                       osample, lambda_sP, lambda_sL, maxiter, kappa,
-                      0 /* use_preset */,
+                      0 /* use_preset */, 0 /* unweighted */,
                       sP, sL, model, unc, info);
 
     free(ycen);
