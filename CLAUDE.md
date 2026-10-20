@@ -192,7 +192,7 @@ The algorithm:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `im` | ndarray (nrows, ncols) | Input 2D spectral image |
-| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties. **Currently unused**: output uncertainties are estimated from data − model residuals |
+| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties. Used only for `weights='unc'` and the default `noise_floor` of `weights='model'`; output uncertainties are estimated from data − model residuals |
 | `mask` | ndarray (nrows, ncols), uint8 | Pixel mask (0=bad, 1=good). **Modified during execution** |
 | `ycen` | ndarray (ncols,) | Order center line offset from pixel boundary. **Modified during execution** |
 | `slitcurve` | ndarray (ncols, n) where n ≤ 6 | Polynomial coefficients [c0..c5] for slit curvature (padded to 6) |
@@ -202,7 +202,9 @@ The algorithm:
 | `lambda_sL` | float | Smoothing parameter for slit function (default: 1.0) |
 | `maxiter` | int | Maximum iterations (default: 20) |
 | `kappa` | float | Outlier rejection threshold in sigma (default: 10.0). Set to 0 to disable. |
-| `preset_slitfunc` | ndarray (nrows,) or (ny,), optional | Fixed slit function: skips the sL solve. Length nrows is interpolated to ny; normalized internally. With `kappa=0` this is a true single-pass extraction (exactly 1 iteration). |
+| `preset_slitfunc` | ndarray (nrows,) or (ny,), optional | Fixed slit function: skips the sL solve. Length nrows is interpolated to ny; normalized internally. With `kappa=0` this is a true single-pass extraction (exactly 1 iteration; 2 with `weights='model'`/`'flux'`). |
+| `weights` | str | `'none'` (default), `'unc'`, `'model'`, `'flux'`; see Pixel weights below |
+| `noise_floor` | float, optional | Read-noise variance for `weights='model'` (default: 5th percentile of pix_unc²) |
 
 ### info array and status codes
 
@@ -331,6 +333,45 @@ about:
   sum; in practice the two are complementary (large polynomial curvature
   implies small deltas and vice versa). For sP the underestimate no longer
   matters at all now that the band is measured from the geometry.
+
+## Pixel weights (`weights=`)
+
+Historically slitdec ignored `pix_unc`: the sL and sP solves were unweighted least squares, so a
+row entered the spectrum with weight ~sL and its line profile with ~sL^2. When the line shape
+varies along the slit (fibre-chord rows: on ESPRESSO 2x1 the slice-centre rows are 1.92 px sigma
+wide, the edges 1.4-1.6 px), that favours the bright, wide rows: the spectrum came out 0.13 px^2
+broader in variance than a column sum or espdr's Horne extraction (R 4-5 % low). Synthetic frames
+with identical rows cannot show this.
+
+`weights=` (all normalised to mean 1 over usable pixels, so lambda_sL keeps its meaning; applied
+in both solves, flat and general path):
+- `"none"` (default): the historic solution, bit-identical (golden suite passes).
+- `"unc"`: static 1/pix_unc^2. Uncertainties computed from the noisy data are correlated with the
+  noise and distort line profiles (real LFC swaths: 1D LSF-fit chi2 ~29 -> ~170).
+- `"model"`: first iteration unweighted, then 1/(max(model, 0) + noise_floor), refreshed every
+  iteration. Unit-agnostic: the model gives the shape of the variance (a gain is a global factor
+  and drops out); `noise_floor` is the read-noise variance in the units of im. Default
+  (None): 5th percentile of pix_unc^2 over usable pixels, the only number taken from pix_unc.
+  On ESPRESSO four-slice swaths: espdr-level resolution, cleanest profiles, ~1.1x the
+  unweighted run time (a Python two-pass with fixed model weights costs 1.8x).
+- `"flux"`: first iteration unweighted, then 1/v with v the pixel's slit-function value
+  (model / spectrum, floored at 1e-3 of max), refreshed every iteration. Rows enter sP in
+  proportion to their flux at any S/N: the bright-source LSF, independent of S/N.
+
+Trade-off (ESPRESSO series, simulated faintness k): `"model"` is noise-optimal but its LSF moves
+with S/N (R -4..5 % from bright to read-noise limited, ending at the unweighted value); `"none"`
+and `"flux"` give S/N-independent LSFs (broad and sharp), costing 8 % in variance on bright data
+(`"none"`) or 10/54/109 % at k = 1e-2/1e-3/1e-4 (`"flux"`).
+
+`"model"` uses slitdec's own model, which knows only the object being decomposed. Light from
+anything else in the swath (neighbour fibres in an IFU peel crop) looks faint to it and gets large
+weights: on the synthetic IFU frames (peel extraction, branch `slitkernel`) the leak got worse (R 1.74 -> 2.74 %), while
+true-variance `"unc"` weights improved it (R 0.58-0.89 %, YJH 0.27-0.55 %). For crowded swaths pass
+uncertainties from a model of everything with `"unc"`. With a preset slit function and kappa=0,
+`"model"`/`"flux"` run one extra pass (the first one is unweighted).
+
+A residual-based floor (variance of the faint pixels after an unweighted pass) does not work on
+real data: the faint pixels are gaps and slit edges, dominated by unmodelled scattered light.
 
 ## Polynomial Degree Handling
 
