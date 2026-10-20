@@ -594,17 +594,6 @@ Structure:
 
 6. **Memory management** - the C code modifies mask and ycen in place; wrapper creates copies to preserve Python inputs
 
-## Web Demo (wasm)
-
-`demo/` holds a static browser demo: `slitdec.c` compiled with emcc to a
-~24 KB wasm module, driven by sliders over sample swaths or uploaded
-FITS/npy files. Deployed to https://ivh.github.io/CharSlit/ via
-`demo/deploy.sh` (orphan `gh-pages` branch; master untouched). Full
-documentation — architecture, build, correctness gate, gotchas (module
-workers + top-level await, heap views under `ALLOW_MEMORY_GROWTH`) — in
-`webdemo.md`. After changing `slitdec.c`, rerun the golden gate:
-`uv run python demo/make_golden.py && node demo/check_golden.mjs`.
-
 ## Useful References
 
 - nanobind documentation: https://nanobind.readthedocs.io/

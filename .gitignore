@@ -9,13 +9,6 @@ uv.lock
 test_data_output/
 *.tar.gz
 
-# wasm demo build outputs and local golden data
-demo/slitdec.mjs
-demo/slitdec.wasm
-demo/golden.json
-demo/swaths.json
-demo/data
-
 # Compiled object files
 *.o
 *.obj
