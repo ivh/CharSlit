@@ -490,7 +490,7 @@ def shift_cumulants(slitcurve, slitdeltas, nrows, osample):
 
 
 def selfcal_param(im, ycen, slitcurve, slitdeltas, *, moments=(1, 2, 3), nk=9, niter=12, node_step=0.5, rn=10.0,
-                  ridge=1e-3, smooth=0.0, gauge="uniform", lit=None, prior=None, k2_offset=0.0, compensate=True, stop_rel=1e-3,
+                  ridge=1e-3, smooth=0.0, gauge="uniform", lit=None, prior=None, k2_offset=0.0, k2_offset_max=0.3, compensate=True, stop_rel=1e-3,
                   row_weight_min=0.2, **slitdec_kw):
     """Parametric alternative to selfcal_u: per-node cumulants instead of free kernel taps.
 
@@ -511,14 +511,16 @@ def selfcal_param(im, ycen, slitcurve, slitdeltas, *, moments=(1, 2, 3), nk=9, n
     over nodes. Rows narrower than the gauge mean would need sharpening kernels, which fit
     worse; instead every kernel gets a common extra variance k2_offset (degenerate with
     sP, so sP is the gauge-mean row LSF narrowed by it). It grows within the run as far
-    as needed and is returned; pass the calibration's value to per-frame fits so their sP
-    has the same LSF. lit: fitted nodes, default those above
+    as needed, up to k2_offset_max; rows needing more get sharpening kernels for the rest.
+    Without the cap a real slit (ESPRESSO slice flanks, k2 range 1-3 px^2) pushed it to
+    1-8 px^2, and deconvolving sP by that much rings. The value is returned; pass the
+    calibration's to per-frame fits so their sP has the same LSF. lit: fitted nodes, default those above
     row_weight_min of the peak row flux in this frame. The gauge is only frame-independent
     if lit is too: for per-frame fits pass lit and gauge from the calibration run.
 
     prior: {n: (nnodes,)} cumulants from a calibration run with the same nodes and gauge;
-    the ridge then pulls towards it instead of towards no change, so a faint frame falls
-    back to the calibration. slitdeltas: (nrows,) or (ny,) base geometry; k1 is added on top
+    the ridge pulls the total cumulants towards it (default: towards zero), so a faint
+    frame falls back to the calibration. slitdeltas: (nrows,) or (ny,) base geometry; k1 is added on top
     of it (an nrows input is stretched exactly as the wrapper would).
 
     A step that raises chi2 is halved and retried from the best point (down to 1/8); the
@@ -571,7 +573,7 @@ def selfcal_param(im, ycen, slitcurve, slitdeltas, *, moments=(1, 2, 3), nk=9, n
             k3 = k3 - v3
             if k4 is not None:
                 k4 = k4 - v4
-        off[0] = max(off[0], -k2.min())
+        off[0] = min(max(off[0], -k2.min()), max(k2_offset_max, k2_offset))
         return sd, kernel_from_moments(k2 + off[0], k3, nk, k4)
 
     k = {n: np.zeros(nn) for n in moments}
@@ -597,7 +599,8 @@ def selfcal_param(im, ycen, slitcurve, slitdeltas, *, moments=(1, 2, 3), nk=9, n
                 best = (chi2, {n: v.copy() for n, v in k.items()}, res, sd, kern)
                 break
             best = (chi2, {n: v.copy() for n, v in k.items()}, res, sd, kern)
-            target = None if prior is None else {n: prior[n] - k[n] for n in moments if n in prior}
+            # towards the prior total, not towards no change: else poorly lit nodes random-walk
+            target = {n: (prior[n] if prior is not None and n in prior else 0.0) - k[n] for n in moments}
             a = fit_cumulants_u(im, res["model"], frac, nodes, moments, fitmask, unc, ridge, target, smooth, k,
                                 osample=os_)
             damp = min(1.0, 2 * damp)

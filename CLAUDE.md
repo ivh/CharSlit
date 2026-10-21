@@ -421,20 +421,31 @@ On data/ANDES_R_FP1.fits (E2E, 256-column swaths) residual chi2 drops 2.5-10x pe
 part of what the kernels absorb there is slit geometry (curvature varying with x), not LSF.
 
 Parametric vs nonparametric (scripts/exp_param_kernel.py, same frames; worst |centroid
-change| over gradient / lower_half / ripple, m/s; noiseless, and peak 1e5 in brackets):
+change| over gradient / lower_half / ripple, m/s, noiseless; peak 1e5 gives the same picture):
 
-| scenario | selfcal_u (fixed) | par3 (fixed) | par4 (fixed) | par3 per frame, uniform gauge | per frame, flux gauge |
+| scenario | selfcal_u (fixed) | par3 (fixed) | par4 (fixed) | par3 per frame, calib. gauge | per frame, flux gauge |
 |---|---|---|---|---|---|
-| fibre geometry only | 0.25 (0.31) | 0.15 (0.17) | 0.44 (0.47) | 0.07 (0.16) | 0.03 (0.08) |
-| PSF width trend | 0.11 (0.09) | 0.38 (0.48) | 0.07 (0.15) | 0.62 (0.76) | 0.16 (0.28) |
-| + strong skew trend | 0.54 (0.46) | 0.19 (0.31) | 0.50 (0.30) | 0.42 (0.59) | **12 / 33** (12 / 33) |
-| mild skew trend | 0.08 (0.12) | 0.09 (0.12) | 0.40 (0.39) | 0.07 (0.06) | 1.7 / 4.4 (1.6 / 4.4) |
+| fibre geometry only | 0.25 | 0.33 | 0.30 | 0.21 | 0.07 |
+| PSF width trend | 0.11 | 0.19 | 0.06 | 0.43 | 0.09 |
+| + strong skew trend | 0.54 | 1.0 | 1.0 | 0.84 | **12 / 33** |
+| mild skew trend | 0.08 | 0.15 | 0.14 | 0.07 | 1.7 / 4.4 |
 
-Calibration chi2 par3 vs taps 203 vs 203 (skew) to 248 vs 245 (width); par4 slightly below
-the taps. The flux-gauge column reproduces most of the plain-slitdec bias (24 / 42 m/s),
-the uniform gauge removes it: the deciding test of the per-frame plan came out as
-predicted. Per-frame dk2 changes by up to -0.13 px^2 on lower_half: k2_offset grows when
-the frame needs more broadening than the calibration, which narrows sP (LATER).
+The flux-gauge column reproduces most of the plain-slitdec bias (24 / 42 m/s), the
+calibration's fixed gauge removes it: the deciding test of the per-frame plan came out as
+predicted. The ridge pulls totals towards zero (needed on real data, see below); with a
+ridge towards no change per step the skew row was 0.2 m/s for par3, at the cost of
+runaway cumulants on real swaths.
+
+ESPRESSO (~/pipes/espresso_lfc_20230124, `illum.py run-par`): real two-slice slits are far
+outside the small-perturbation regime. k2 spans 1-3 px^2 across the slit, slice cores are
+boxy (k4 ~ -8 px^4) and flanks broad and peaky (k4 up to +26); 5-tap stencils times such
+values give oscillating kernels. Needed: smoothness along u (alternating node values average
+out within a pixel at 0.5-row nodes), a cap on the common k2 offset (uncapped it reached
+1-8 px^2 and sP rang), the ridge towards zero total. Even then par4 fixed kernels blow up
+on single red swaths of a rescaled frame. Illumination test there (slice b x0.5/x2, LFC
+calibrated in-sample): par3 matches the taps in the red (1.0-1.2 vs 0.3-1.4 m/s) but is
+1.5-3x worse in the blue (3-4.5 vs 1.2-3 m/s); per frame with the calibration's gauge
+0.4-6.5 m/s, with the flux gauge back at plain-slitdec level (10-12.6 m/s in the blue).
 
 Note: pyechelle <= 0.4.0 caches PSFs per (ccd, order), not per fibre, so E2E frames use
 the first fibre's PSF for all fibres even though the ANDES HDFs store per-fibre PSFs
