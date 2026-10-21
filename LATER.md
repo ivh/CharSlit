@@ -27,7 +27,10 @@ Deferred items from the `slitkernel` branch. Context in CLAUDE.md, "Slit kernels
   2.75 px^2 with slitdeltas); lambda_fringe = 0.01 collapses to s = 1, lambda_sP 0.1-10 is
   far too strong at this flux (no scaling). Not worth a merge with slitkernel on this
   evidence; would need a real swath with x-varying tilt to show a gain.
-- **Per-frame kernel fit on the science frame** (agreed plan, 2026-10-15). Fit the kernels
+- **Per-frame kernel fit on the science frame** (agreed plan, 2026-10-15; implemented as
+  `selfcal_param` 2026-10-21, synthetic results in CLAUDE.md: the gauge test came out as
+  predicted, <= 0.8 m/s with the calibration's gauge, 12/33 m/s with the frame's flux
+  gauge. Still open: ESPRESSO real swaths, a transfer test, and the items below). Fit the kernels
   on the frame being extracted, from its own residuals, then re-extract, instead of only
   taking them from an FP calibration. Design:
   - **Parametrise** each node as shift, width and skew (3 parameters) instead of 9 free
@@ -61,9 +64,21 @@ Deferred items from the `slitkernel` branch. Context in CLAUDE.md, "Slit kernels
   (goldens).
 - **ycen fraction = k/osample** shifts slitdec's subpixel grid by one subpixel (d1 = step
   convention). Intended?
-- **Slitdeltas in slit coordinates.** `selfcal` (k1 -> slitdeltas) assumes a constant ycen
-  fraction; on real swaths the kernels' shift component absorbs per-u centroid errors
-  instead. A `selfcal_u`-style k1 fit would separate geometry from LSF.
+- **Slitdeltas in slit coordinates.** Done by `selfcal_param(moments=(1,))` (or with k2, k3).
+  `selfcal_u`'s taps still have a free first moment, so they keep absorbing per-u centroid
+  errors; switching the scripts' `selfcal` k1 step to selfcal_param would separate them.
+- **selfcal_param: k2 gauge per frame.** `k2_offset` grows when a frame needs more
+  broadening than the calibration (dk2 up to -0.13 px^2 on lower_half), which changes sP's
+  LSF width. Centroids are unaffected; the LSF of the extracted spectrum is not. Options:
+  fix the offset with a margin from the calibration, or report sP's LSF as gauge-mean
+  minus k2_offset per frame.
+- **selfcal_param: k4.** Lower chi2 than the taps but trades against k2/k3 and needs step
+  halving (the linearised B4 step overshoots); biases not better than par3 in the
+  illumination test. Undersampled lines (sigma ~0.9 px) make k2 and k4 nearly degenerate.
+- **selfcal_param: real data.** First testbed: the ESPRESSO LFC swaths
+  (~/pipes/espresso_lfc_20230124), where the free taps needed 1-row nodes and ridge 1e-2 at
+  ~7 rows per slice. Compare chi2 out of sample (fibre A -> B, LFC -> FP) and the
+  illumination test there. Compensation is column-averaged where the tilt varies along x.
 - **x-dependence.** Kernels are constant across a swath; on ANDES_R_FP1 the residual
   geometry varies with x within 256 columns. Overlapping swaths + interpolation, as PyReduce
   does for sL.

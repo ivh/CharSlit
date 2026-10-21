@@ -353,21 +353,41 @@ argument lets each subpixel row iy convolve sP with its own kernel before the sh
 
 ### slitkernel.py (calibration helpers)
 
-- `selfcal_u` - the one to use: nonparametric kernels on slit-coordinate nodes
+- `selfcal_u` - nonparametric kernels on slit-coordinate nodes
   (u = y - ycen_frac, node_step 0.5 rows), fitted by sparse least squares of data against
   `D(u) * model` (a row-constant kernel commutes with the subpixel shifts), composed
   iteratively, keeps the best-chi2 iteration. Handles ycen fractions that vary across the
   swath (real rectified cutouts). Excludes the swath-edge wedge (2*delta_x columns each side)
   from fit and chi2. Do not turn on `smooth`: it biases the kernels (chi2 54 -> 68 and
   +-5 m/s illumination-dependent centroid shifts in the psf_width test).
-- `selfcal_lsq` - same per detector row; only valid for constant ycen fraction.
-- `selfcal` - moment-based (k1 -> slitdeltas, k2/k3 -> parametric kernels). Use it for k1
-  (slitdeltas from data-vs-model line centroids) only: parametric (Gaussian-shaped)
-  kernels with the right variance make chi2 worse, because the true per-row profiles
-  differ in shape (boxy chord vs peaky junction), not just in variance.
+- `selfcal_param` - the parametric alternative, same node grid: per node shift k1, width
+  k2, skew k3 (+ optional excess kurtosis k4, `moments=(1,2,3,4)`). k1 goes into
+  slitdeltas, k2..k4 into zero-mean kernels (`kernel_from_moments`). Fit by linear least
+  squares on 5-tap derivative stencils (`STENCILS`, unit n-th moment, so cumulants add
+  across iterations), with step halving when chi2 rises. Details that matter:
+  - **Shift-interpolation compensation** (`compensate=True`, `shift_cumulants`): slitdec's
+    (1-f, f) split of a fractional shift adds variance f(1-f), 3rd cumulant f(1-f)(1-2f)
+    (up to 0.096 px^3) and a 4th. Uncompensated, k3 absorbs it: spurious +-0.08 px^3 on a
+    frame with a shift trend and no skew (0.012 rms compensated). Slit coordinate of the
+    shift is t = u - nrows//2 (verified with preset slit functions).
+  - **Gauge:** every cumulant has zero weighted mean over `lit` nodes (`gauge="uniform"`,
+    `"flux"` or an array); unlit nodes copy the nearest lit one. Kernels only broaden: a
+    common `k2_offset` (degenerate with sP) is added, grown as needed and returned.
+    Sharpening kernels (k2 < 0) work but fit worse (psf_skew chi2 199 -> 221, biases x5).
+  - **Per-frame use:** pass `lit`, `gauge` and `k2_offset` from the calibration run, else
+    the gauge follows the frame's illumination (a half-dark slit drops nodes from `lit`:
+    -43 m/s). `prior=` cumulants + larger `ridge` pull towards the calibration.
+  - Known-truth recovery (synthetic rows with Gaussian width trend, shift and two-Gaussian
+    skew, peak ~1e4): core rows k1 0.003 px, k2 0.02 px^2, k3 0.007 px^3 rms. With k4 the
+    chi2 drops below the free taps' (3.75 vs 4.2) but k4 trades against k2/k3 (k2 error
+    x1.4, k3 x2), so k4 is for fit quality, not for interpreting the cumulants.
+- `selfcal_lsq` - same as selfcal_u per detector row; only valid for constant ycen fraction.
+- `selfcal` - k1 only (slitdeltas from data-vs-model line centroids), constant ycen
+  fraction. Its moment-matched k2/k3 kernels were removed: they made chi2 worse, which was
+  the moment matching, not the parametrisation (selfcal_param matches the taps' chi2).
 - `kernel_from_moments` - discrete-Gaussian (exp(-t) I_n(t), variance exactly t) plus an
-  antisymmetric 5-tap skew term. A minimum-norm moment solution is NOT a delta at k2 = 0;
-  that was the first bug here.
+  antisymmetric 5-tap skew term and optional B4 kurtosis term; k2 < 0 gives delta + k2 B2.
+  A minimum-norm moment solution is NOT a delta at k2 = 0; that was the first bug here.
 
 ### Geometry gotchas found on the way
 
@@ -399,6 +419,22 @@ Same picture with Poisson noise (peak 3e4, 3 seeds). Calibration-frame chi2 drop
 (e.g. 169 -> 51) but stays far above 1 noiseless: kernels do not capture everything.
 On data/ANDES_R_FP1.fits (E2E, 256-column swaths) residual chi2 drops 2.5-10x per swath;
 part of what the kernels absorb there is slit geometry (curvature varying with x), not LSF.
+
+Parametric vs nonparametric (scripts/exp_param_kernel.py, same frames; worst |centroid
+change| over gradient / lower_half / ripple, m/s; noiseless, and peak 1e5 in brackets):
+
+| scenario | selfcal_u (fixed) | par3 (fixed) | par4 (fixed) | par3 per frame, uniform gauge | per frame, flux gauge |
+|---|---|---|---|---|---|
+| fibre geometry only | 0.25 (0.31) | 0.15 (0.17) | 0.44 (0.47) | 0.07 (0.16) | 0.03 (0.08) |
+| PSF width trend | 0.11 (0.09) | 0.38 (0.48) | 0.07 (0.15) | 0.62 (0.76) | 0.16 (0.28) |
+| + strong skew trend | 0.54 (0.46) | 0.19 (0.31) | 0.50 (0.30) | 0.42 (0.59) | **12 / 33** (12 / 33) |
+| mild skew trend | 0.08 (0.12) | 0.09 (0.12) | 0.40 (0.39) | 0.07 (0.06) | 1.7 / 4.4 (1.6 / 4.4) |
+
+Calibration chi2 par3 vs taps 203 vs 203 (skew) to 248 vs 245 (width); par4 slightly below
+the taps. The flux-gauge column reproduces most of the plain-slitdec bias (24 / 42 m/s),
+the uniform gauge removes it: the deciding test of the per-frame plan came out as
+predicted. Per-frame dk2 changes by up to -0.13 px^2 on lower_half: k2_offset grows when
+the frame needs more broadening than the calibration, which narrows sP (LATER).
 
 Note: pyechelle <= 0.4.0 caches PSFs per (ccd, order), not per fibre, so E2E frames use
 the first fibre's PSF for all fibres even though the ANDES HDFs store per-fibre PSFs
