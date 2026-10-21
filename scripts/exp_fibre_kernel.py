@@ -90,7 +90,7 @@ def main(scenarios=("geometry", "psf_width", "psf_skew", "psf_skew_mild"), peak=
         sc[:, 1] = TILT
         uni = frames["uniform"]
         yc = np.full(NCOLS, YC)
-        c1 = sk.selfcal(uni, yc, sc, np.zeros(NROWS), niter=6, fit_k2=False, fit_k3=False, **KW)
+        c1 = sk.selfcal(uni, yc, sc, np.zeros(NROWS), niter=6, **KW)
         sd = sk.rows_to_subpix(c1["slitdeltas"], KW["osample"], YC)
         ck = sk.selfcal_lsq(uni, yc, sc, sd, niter=6, rn=RN, ycen_frac=YC, **KW)
         cu = sk.selfcal_u(uni, yc, sc, sd, niter=6, rn=RN, **KW)

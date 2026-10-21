@@ -61,7 +61,7 @@ def main():
     sc = np.zeros((NC, 2))
     sc[:, 1] = TILT
     yc = np.full(NC, YC)
-    c1 = sk.selfcal(uni, yc, sc, np.zeros(NR), niter=6, fit_k2=False, fit_k3=False, **KW)
+    c1 = sk.selfcal(uni, yc, sc, np.zeros(NR), niter=6, **KW)
     sd = sk.rows_to_subpix(c1["slitdeltas"], KW["osample"], YC)
     cu = sk.selfcal_u(uni, yc, sc, sd, niter=6, rn=RN, **KW)
     variants = {"slitdec": (np.zeros(NR), None, C_PLAIN), "+ slitdeltas": (sd, None, C_DELTA),
