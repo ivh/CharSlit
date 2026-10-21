@@ -28,9 +28,9 @@ Deferred items from the `slitkernel` branch. Context in CLAUDE.md, "Slit kernels
   far too strong at this flux (no scaling). Not worth a merge with slitkernel on this
   evidence; would need a real swath with x-varying tilt to show a gain.
 - **Per-frame kernel fit on the science frame** (agreed plan, 2026-10-15; implemented as
-  `selfcal_param` 2026-10-21, synthetic results in CLAUDE.md: the gauge test came out as
-  predicted, <= 0.8 m/s with the calibration's gauge, 12/33 m/s with the frame's flux
-  gauge. Still open: ESPRESSO real swaths, a transfer test, and the items below). Fit the kernels
+  `selfcal_param` 2026-10-21, results in CLAUDE.md: the gauge test came out as predicted,
+  synthetic and on ESPRESSO; but on ESPRESSO the parametric kernels are worse than the taps
+  in the blue and fragile. Still open: transfer test, and the items below). Fit the kernels
   on the frame being extracted, from its own residuals, then re-extract, instead of only
   taking them from an FP calibration. Design:
   - **Parametrise** each node as shift, width and skew (3 parameters) instead of 9 free
@@ -75,10 +75,15 @@ Deferred items from the `slitkernel` branch. Context in CLAUDE.md, "Slit kernels
 - **selfcal_param: k4.** Lower chi2 than the taps but trades against k2/k3 and needs step
   halving (the linearised B4 step overshoots); biases not better than par3 in the
   illumination test. Undersampled lines (sigma ~0.9 px) make k2 and k4 nearly degenerate.
-- **selfcal_param: real data.** First testbed: the ESPRESSO LFC swaths
-  (~/pipes/espresso_lfc_20230124), where the free taps needed 1-row nodes and ridge 1e-2 at
-  ~7 rows per slice. Compare chi2 out of sample (fibre A -> B, LFC -> FP) and the
-  illumination test there. Compensation is column-averaged where the tilt varies along x.
+- **selfcal_param on large shape differences** (ESPRESSO: k2 range 1-3 px^2, k4 -8..+26).
+  The linear 5-tap stencils are a small-perturbation basis. Options: cumulants relative to a
+  per-row reference profile instead of a delta (e.g. the gauge-mean row LSF from the taps),
+  a wider and smoother basis (Gauss-Hermite functions scaled to the LSF width instead of
+  pixel stencils), or bounds on the cumulants. Also: fixed par4 kernels still blow up on
+  single red swaths of a rescaled frame (-1e5..-3e5 e- in sP).
+- **selfcal_param ridge.** Towards zero total (default since the ESPRESSO run) biases true
+  cumulants: synthetic psf_skew went from 0.2 to 1.0 m/s. A ridge scaled per node by its
+  flux (strong only where poorly lit) would keep both.
 - **x-dependence.** Kernels are constant across a swath; on ANDES_R_FP1 the residual
   geometry varies with x within 256 columns. Overlapping swaths + interpolation, as PyReduce
   does for sL.
