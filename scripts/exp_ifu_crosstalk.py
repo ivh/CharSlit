@@ -83,11 +83,19 @@ def extract_single(im, Tflat, w, sub=None):
     return np.array([(P[f] * w * (im - sub[f])).sum(0) / (P[f] ** 2 * w).sum(0) for f in range(len(P))])
 
 
-def extract_peel(im, Tflat, w):
+def extract_peel(im, Tflat, w, npass=2, tol=1e-10, maxpass=200):
+    """npass=None iterates to convergence, which is the joint per-column solution (Jacobi). Two passes cancel the
+    nearest neighbours but leave second-order light from the fibres two places away."""
     P = Tflat / Tflat.sum(1, keepdims=True)
-    s1 = extract_single(im, Tflat, w)
-    model = s1[:, None, :] * P
-    return extract_single(im, Tflat, w, sub=model.sum(0)[None] - model)
+    s = extract_single(im, Tflat, w)
+    for p in range(2, (maxpass if npass is None else npass) + 1):
+        model = s[:, None, :] * P
+        new = extract_single(im, Tflat, w, sub=model.sum(0)[None] - model)
+        done = npass is None and np.abs(new - s).max() <= tol * np.abs(new).max()
+        s = new
+        if done:
+            break
+    return s
 
 
 def build_A(T):
