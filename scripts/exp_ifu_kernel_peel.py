@@ -2,7 +2,7 @@
 
 Same frames and leak metric as exp_ifu_crosstalk.py. Per fibre, on a row crop centred on it:
   calibration  slit function from the fibre's masked flat; kernels from selfcal_u on an
-               FP-like frame through that fibre alone; slit curve = the true tilt
+               FP-like frame through that fibre alone, with that slit function fixed; slit curve = the true tilt
   extraction   slitdec with that slit function, kernels and slit curve fixed (sP only)
   peel         pass 1 per fibre, subtract the neighbours' models, re-extract (pass 2);
                further passes iterate towards the joint solution
@@ -47,15 +47,17 @@ def calibrate(T, geom, nrows, use_kernels):
         rows = slice(r0, r0 + 2 * HALF)
         ycen = np.full(E.NC, frac)
         sd = np.zeros(2 * HALF)
-        fp = E.image_of(T[f], FP + 2e3)[rows]
+        # sL from the masked flat, not from line frames: only the flat's row-flux profile makes the subtracted
+        # neighbour models carry the right flux per row; an sL fitted to non-separable line images does not
+        flat = E.image_of(T[f], np.full(E.NC, 2e3))[rows]
+        sL = charslit.slitdec(flat, np.sqrt(np.abs(flat) + E.RN**2), np.ones(flat.shape, np.uint8), ycen.copy(), sc, sd,
+                              **KW)["slitfunction"]
+        kern = None
         if use_kernels:
+            fp = E.image_of(T[f], FP + 2e3)[rows]
             # the fibre wings are what overlaps the neighbours, so fit kernels there too
-            c = sk.selfcal_u(fp, ycen, sc, sd, nk=9, niter=8, rn=E.RN, row_weight_min=0.02, **KW)
-            kern, sL = c["kernel"], c["result"]["slitfunction"]
-        else:
-            kern = None
-            sL = charslit.slitdec(fp, np.sqrt(np.abs(fp) + E.RN**2), np.ones(fp.shape, np.uint8), ycen.copy(), sc, sd,
-                                  **KW)["slitfunction"]
+            kern = sk.selfcal_u(fp, ycen, sc, sd, nk=9, niter=8, rn=E.RN, row_weight_min=0.02, preset_slitfunc=sL,
+                                **KW)["kernel"]
         cal.append(dict(rows=rows, ycen=ycen, sc=sc, sd=sd, kern=kern, sL=sL))
     return cal
 
