@@ -368,6 +368,31 @@ class TestNumericalBehavior:
                       uncertainty=result["uncertainty"],
                       mask_out=result["mask"])
 
+    @pytest.mark.parametrize("osample", [1, 3, 4, 5, 10])
+    @pytest.mark.parametrize("curved", [False, True], ids=["flat", "curved"])
+    def test_ycen_on_subpixel_boundary(self, osample, curved):
+        """A column whose ycen sits exactly on a subpixel boundary k/osample must
+        extract like its neighbours an epsilon above it. fmod-derived d1 used to
+        pair that column's subpixel index with the weight of the other side,
+        shifting its slit sampling by one subpixel (~5% flux error)."""
+        nrows, ncols, x0 = 20, 33, 14
+        y = np.arange(nrows)
+        prof = np.exp(-0.5 * ((y - 9.5) / 2.0) ** 2)
+        im = np.outer(prof / prof.sum(), np.full(ncols, 1e6))
+        pix_unc = np.sqrt(im).clip(1)
+        slitcurve = np.zeros((ncols, 3))
+        if curved:  # any nonzero coefficient leaves the flat fast path
+            slitcurve[:, 1] = 1e-12
+        for k in range(osample):
+            ycen = np.full(ncols, 9 + k / osample + 1e-12)
+            ycen[x0] = 9 + k / osample
+            result = charslit.slitdec(
+                im, pix_unc, np.ones(im.shape, dtype=np.uint8), ycen,
+                slitcurve, np.zeros(nrows), osample=osample, kappa=0.0,
+            )
+            sp = result["spectrum"]
+            assert abs(sp[x0] / np.median(sp) - 1) < 1e-9, f"k={k}"
+
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
