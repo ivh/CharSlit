@@ -806,3 +806,35 @@ class TestPresetSlitfunction:
                 osample=data["osample"],
                 preset_slitfunc=wrong,
             )
+
+
+class TestModelWeights:
+    """weights='model': variance a*model + b fitted to pix_unc^2."""
+
+    def _run(self, data, pix_unc, weights):
+        return charslit.slitdec(
+            data["im"], pix_unc, data["mask"].copy(), data["ycen"],
+            data["slitcurve"], data["slitdeltas"], osample=data["osample"],
+            weights=weights,
+        )
+
+    def test_constant_unc_equals_none(self, simple_image_data):
+        """Constant pix_unc fits a = 0: uniform weights, i.e. the unweighted solution."""
+        data = simple_image_data
+        ref = self._run(data, data["pix_unc"], "none")
+        res = self._run(data, data["pix_unc"], "model")
+        np.testing.assert_allclose(res["spectrum"], ref["spectrum"], rtol=1e-12)
+
+    def test_hot_pixel_unc_robust(self, simple_image_data):
+        """Shot-noise pix_unc with a few huge hot-pixel errors: weights active, result sane."""
+        data = simple_image_data
+        unc = np.sqrt(np.clip(data["im"], 0, None) / 2.0 + 1.0)
+        rng = np.random.default_rng(1)
+        hot = rng.choice(unc.size, 10, replace=False)
+        unc.flat[hot] = 1e4
+        ref = self._run(data, unc, "none")
+        res = self._run(data, unc, "model")
+        assert res["return_code"] == 0
+        assert np.all(np.isfinite(res["spectrum"]))
+        assert not np.allclose(res["spectrum"], ref["spectrum"], rtol=1e-6)
+        np.testing.assert_allclose(res["spectrum"], ref["spectrum"], rtol=0.05)

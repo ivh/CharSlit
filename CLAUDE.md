@@ -192,7 +192,7 @@ The algorithm:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `im` | ndarray (nrows, ncols) | Input 2D spectral image |
-| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties. Used only for `weights='unc'` and the default `noise_floor` of `weights='model'`; output uncertainties are estimated from data − model residuals |
+| `pix_unc` | ndarray (nrows, ncols) | Pixel uncertainties. Used only for `weights='unc'` and the variance fit of `weights='model'`; output uncertainties are estimated from data − model residuals |
 | `mask` | ndarray (nrows, ncols), uint8 | Pixel mask (0=bad, 1=good). **Modified during execution** |
 | `ycen` | ndarray (ncols,) | Order center line offset from pixel boundary. **Modified during execution** |
 | `slitcurve` | ndarray (ncols, n) where n ≤ 6 | Polynomial coefficients [c0..c5] for slit curvature (padded to 6) |
@@ -204,7 +204,7 @@ The algorithm:
 | `kappa` | float | Outlier rejection threshold in sigma (default: 10.0). Set to 0 to disable. |
 | `preset_slitfunc` | ndarray (nrows,) or (ny,), optional | Fixed slit function: skips the sL solve. Length nrows is interpolated to ny; normalized internally. With `kappa=0` this is a true single-pass extraction (exactly 1 iteration; 2 with `weights='model'`/`'flux'`). |
 | `weights` | str | `'none'` (default), `'unc'`, `'model'`, `'flux'`; see Pixel weights below |
-| `noise_floor` | float, optional | Read-noise variance for `weights='model'` (default: 5th percentile of pix_unc²) |
+| `noise_floor` | float, optional | Variance offset b for `weights='model'` (default: fitted, at least the 5th percentile of pix_unc²) |
 
 ### info array and status codes
 
@@ -348,12 +348,19 @@ in both solves, flat and general path):
 - `"none"` (default): the historic solution, bit-identical (golden suite passes).
 - `"unc"`: static 1/pix_unc^2. Uncertainties computed from the noisy data are correlated with the
   noise and distort line profiles (real LFC swaths: 1D LSF-fit chi2 ~29 -> ~170).
-- `"model"`: first iteration unweighted, then 1/(max(model, 0) + noise_floor), refreshed every
-  iteration. Unit-agnostic: the model gives the shape of the variance (a gain is a global factor
-  and drops out); `noise_floor` is the read-noise variance in the units of im. Default
-  (None): 5th percentile of pix_unc^2 over usable pixels, the only number taken from pix_unc.
-  On ESPRESSO four-slice swaths: espdr-level resolution, cleanest profiles, ~1.1x the
-  unweighted run time (a Python two-pass with fixed model weights costs 1.8x).
+- `"model"`: first iteration unweighted, then 1/(a * max(model, 0) + b), refreshed every
+  iteration, with a and b fitted to pix_unc^2 each time (`variance_fit`: line through the
+  medians of 32 equal-count bins along the model, robust to hot pixels). The model is the
+  background-subtracted object, so the variance is affine in it: b is read noise plus the shot
+  noise of any subtracted background, a = 1/(gain * frames combined). A gain does NOT drop out
+  next to b; the earlier 1/(model + noise_floor) put the photon/background crossover off by that
+  factor (~200 on 100 CRIRES+ A-B pairs) and gave more noise and spikes than none.
+  `noise_floor` >= 0 fixes b; default (None) fits it, but not below the 5th percentile of
+  pix_unc^2. MODEL now depends on pix_unc being a correct variance (incl. subtracted background
+  and frame averaging); constant or missing pix_unc gives a = 0, i.e. uniform weights = none.
+  On CRIRES+ L/M nodding (cr2res, 2026-10) it was at best equal to none: the real noise there is
+  not what pix_unc describes. The ESPRESSO four-slice results (espdr-level resolution, cleanest
+  profiles, ~1.1x the unweighted run time) were measured with the old formula.
 - `"flux"`: first iteration unweighted, then 1/v with v the pixel's slit-function value
   (model / spectrum, floored at 1e-3 of max), refreshed every iteration. Rows enter sP in
   proportion to their flux at any S/N: the bright-source LSF, independent of S/N.
