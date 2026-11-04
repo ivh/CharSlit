@@ -336,6 +336,8 @@ about:
 
 ## Pixel weights (`weights=`)
 
+User-facing explanation with derivations and results: [docs/slitdec_weights.md](docs/slitdec_weights.md).
+
 Historically slitdec ignored `pix_unc`: the sL and sP solves were unweighted least squares, so a
 row entered the spectrum with weight ~sL and its line profile with ~sL^2. When the line shape
 varies along the slit (fibre-chord rows: on ESPRESSO 2x1 the slice-centre rows are 1.92 px sigma
@@ -360,7 +362,8 @@ in both solves, flat and general path):
   and frame averaging); constant or missing pix_unc gives a = 0, i.e. uniform weights = none.
   On CRIRES+ L/M nodding (cr2res, 2026-10) it was at best equal to none: the real noise there is
   not what pix_unc describes. The ESPRESSO four-slice results (espdr-level resolution, cleanest
-  profiles, ~1.1x the unweighted run time) were measured with the old formula.
+  profiles, ~1.1x the unweighted run time) stand: those frames were single exposures in
+  electrons without a subtracted background, where a = 1 is the right scale.
 - `"flux"`: first iteration unweighted, then 1/v with v the pixel's slit-function value
   (model / spectrum, floored at 1e-3 of max), refreshed every iteration. Rows enter sP in
   proportion to their flux at any S/N: the bright-source LSF, independent of S/N.

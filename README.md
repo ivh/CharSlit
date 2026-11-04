@@ -42,7 +42,8 @@ result = charslit.slitdec(
     osample=6,        # Oversampling factor
     lambda_sP=0.0,    # Spectrum smoothing
     lambda_sL=0.1,    # Slit function smoothing
-    maxiter=20        # Max iterations
+    maxiter=20,       # Max iterations
+    weights="none",   # Pixel weights: "none", "unc", "model" or "flux"
 )
 
 # Access results
@@ -52,6 +53,9 @@ model = result['model']                # Reconstructed 2D image
 uncertainty = result['uncertainty']    # Spectrum uncertainties
 info = result['info']                  # [success, cost, status, iter, delta_x]
 ```
+
+Pixel weights trade noise against a line-spread function that does not depend on S/N; see
+[docs/slitdec_weights.md](docs/slitdec_weights.md) for when to use which.
 
 ## Testing
 
