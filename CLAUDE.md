@@ -30,11 +30,11 @@ CharSlit is a Python wrapper for the `slitdec` C library, which performs slit de
 - Describes the horizontal offset of the slit as a function of vertical position
 - Should trace the curvature of the spectral order visible in the data
 
-## make_curvedelta.py: Trajectory Fitting and Coordinate Systems
+## scripts/make_curvedelta.py: Trajectory Fitting and Coordinate Systems
 
 ### Overview
 
-The `make_curvedelta.py` script analyzes FITS images to extract:
+The `scripts/make_curvedelta.py` script analyzes FITS images to extract:
 1. Individual spectral line trajectories (emission lines)
 2. Polynomial fits describing their curvature
 3. Interpolated slitcurve coefficients for all columns
@@ -275,7 +275,7 @@ So `delta` represents **horizontal pixel displacement**, and `slitdeltas[iy]` is
 ## Performance: zeta tensor, SLE fills, threading
 
 `slitdec` was optimized in three rounds (full rationale and benchmarks in
-`speed.md`; Round 3 brought the bench total from ~10 s to ~1.4 s
+`docs/speed.md`; Round 3 brought the bench total from ~10 s to ~1.4 s
 single-threaded). The current structure future sessions should know
 about:
 
@@ -403,9 +403,9 @@ The Python wrapper (`slitdec_wrapper.cpp`) automatically pads lower-degree polyn
 ### Python Scripts
 
 All Python scripts handle arbitrary polynomial degrees dynamically:
-- **make_curvedelta.py**: `--poly-degree` flag (default 2) fits polynomials of specified degree
+- **scripts/make_curvedelta.py**: `--poly-degree` flag (default 2) fits polynomials of specified degree
 - **plotting.py**: Uses `np.polyval()` to evaluate polynomials of any degree
-- **analyze_curvedelta.py**: Detects degree from array shape and displays all coefficients
+- **scripts/analyze_curvedelta.py**: Detects degree from array shape and displays all coefficients
 
 ### Why This Approach?
 
@@ -432,7 +432,7 @@ If degree >5 is needed in the future, only the C code needs updating (change `*6
 - **TestRealData**: Tests on real FITS files from `data/` directory
 - **TestPresetSlitfunction**: Single-pass extraction with a fixed slit function
 
-`tests/test_regression.py` adds golden-reference tests (see speed.md):
+`tests/test_regression.py` adds golden-reference tests (see docs/speed.md):
 they pin spectrum/slit-function/model/uncertainty (rtol 1e-10) and the
 output mask (exact) for 3 synthetic cases and every real FITS file.
 Goldens are gitignored local artifacts; regenerate with

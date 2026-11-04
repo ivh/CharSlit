@@ -1,6 +1,6 @@
 ## Results
 
-Benchmark: `uv run python bench.py` (best-of-N wall time over the real data
+Benchmark: `uv run python scripts/bench.py` (best-of-N wall time over the real data
 files in `data/`, Release build, Apple Silicon).
 
 | Stage | Total | CRIRES per-iteration |
@@ -29,7 +29,7 @@ accumulation). See "What was changed", Round 2 below.
 
 ### Round 3: flat fast path + y-major zeta (July 2026)
 
-Benchmark totals (`uv run python bench.py 5`, best-of-5, single-threaded,
+Benchmark totals (`uv run python scripts/bench.py 5`, best-of-5, single-threaded,
 M4 Pro):
 
 | File | Round 2 (7540af6) | Round 3 | speedup |
@@ -183,5 +183,5 @@ a bottleneck.
 ```bash
 uv pip install -e . --force-reinstall --no-deps
 uv run pytest                 # includes golden regression tests
-uv run python bench.py 5      # benchmark, best of 5
+uv run python scripts/bench.py 5      # benchmark, best of 5
 ```

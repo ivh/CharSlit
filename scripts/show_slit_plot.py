@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 import charslit
-from plotting import plot_slitdec_results
-import matplotlib.pyplot as plt
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from plotting import plot_slitdec_results  # noqa: E402
 
 def load_data(fits_path):
     fits_path = Path(fits_path)

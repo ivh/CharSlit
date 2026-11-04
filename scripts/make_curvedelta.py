@@ -10,8 +10,8 @@ This script:
 5. Saves slitcurve polynomials and residual slitdeltas for use in slitdec
 
 Usage:
-    python make_curvedelta.py [options] file1.fits file2.fits ...
-    python make_curvedelta.py --height-multiplier 2.0 data/Hsim.fits
+    python scripts/make_curvedelta.py [options] file1.fits file2.fits ...
+    python scripts/make_curvedelta.py --height-multiplier 2.0 data/Hsim.fits
 """
 
 import argparse

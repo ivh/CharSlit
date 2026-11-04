@@ -9,12 +9,14 @@ at regularly spaced column positions. Also shows the effect of residual slitdelt
 import argparse
 import os
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 
-from plotting import overlay_slitcurve_trajectories
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from plotting import overlay_slitcurve_trajectories  # noqa: E402
 
 
 def plot_curvedelta(
@@ -84,7 +86,7 @@ def plot_curvedelta(
         show_interpolated=True,
     )
 
-    cbar = plt.colorbar(im_plot, ax=ax, label="Intensity")
+    plt.colorbar(im_plot, ax=ax, label="Intensity")
     ax.legend(loc="upper right", fontsize=8)
     ax.set_xlim(0, ncols)
     ax.set_ylim(0, nrows)
@@ -158,7 +160,7 @@ def main():
         ]
 
     if not fits_files:
-        print(f"No FITS files found!")
+        print("No FITS files found!")
         sys.exit(1)
 
     print(f"Processing {len(fits_files)} files with {args.num_lines} slitcurve lines...\n")

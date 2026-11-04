@@ -1,4 +1,4 @@
-"""Benchmark slitdec on the real data files. Usage: uv run python bench.py [nrepeat]
+"""Benchmark slitdec on the real data files. Usage: uv run python scripts/bench.py [nrepeat]
 
 This times ONLY the charslit.slitdec C call (each case is loaded once, then the
 call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
