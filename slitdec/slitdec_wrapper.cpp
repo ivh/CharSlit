@@ -33,8 +33,11 @@ nb::dict slitdec_wrapper(
     std::vector<double> mu_x,
     std::optional<std::vector<double>> mu_y,
     double t_offset,
-    std::optional<int> y_lower_lim
+    std::optional<int> y_lower_lim,
+    std::optional<int> out_x
 ) {
+    if (out_x.has_value() && (*out_x < 1 || osample_x % *out_x != 0))
+        throw std::runtime_error("out_x must be >= 1 and divide osample_x");
     if (osample_x < 1)
         throw std::runtime_error("osample_x must be >= 1");
     if (mu_x.size() > SLITDEC_OX_KMAX || (mu_y.has_value() && mu_y->size() > SLITDEC_OX_KMAX))
@@ -275,6 +278,20 @@ nb::dict slitdec_wrapper(
     result_dict["model"] = model_array;
     result_dict["uncertainty"] = unc_array;
     result_dict["spectrum_fine"] = sPf_array;
+    if (out_x.has_value()) {
+        // Mean of osample_x / out_x adjacent fine bins: the model's density over each output bin
+        const int nb = osample_x / *out_x;
+        const size_t nout = static_cast<size_t>(ncols) * *out_x;
+        double* sPo = new double[nout];
+        for (size_t j = 0; j < nout; j++) {
+            double acc = 0.0;
+            for (int k = 0; k < nb; k++) acc += sPf[j * nb + k];
+            sPo[j] = acc / nb;
+        }
+        size_t out_shape[1] = {nout};
+        nb::capsule out_owner(sPo, [](void *p) noexcept { delete[] (double *) p; });
+        result_dict["spectrum_out"] = nb::ndarray<nb::numpy, double>(sPo, 1, out_shape, out_owner);
+    }
     result_dict["info"] = info_array;
     result_dict["info_ox"] = ext_array;
     result_dict["mask"] = mask_array;
@@ -304,6 +321,7 @@ NB_MODULE(charslit, m) {
           nb::arg("mu_y") = nb::none(),
           nb::arg("t_offset") = 0.5,
           nb::arg("y_lower_lim") = nb::none(),
+          nb::arg("out_x") = nb::none(),
           "Slit decomposition with the spectrum oversampled along x (slitdec_ox)\n\n"
           "Parameters\n"
           "----------\n"
@@ -372,7 +390,11 @@ NB_MODULE(charslit, m) {
           "    the centre, 0 the lower edge as in slitdec.c, which shifts lines\n"
           "    by c1/(2*osample).\n"
           "y_lower_lim : int, optional\n"
-          "    Rows below the trace row in the swath (default None: nrows // 2).\n\n"
+          "    Rows below the trace row in the swath (default None: nrows // 2).\n"
+          "out_x : int, optional\n"
+          "    Also return the spectrum on out_x bins per column (key spectrum_out):\n"
+          "    the mean of osample_x / out_x adjacent fine bins. Must divide\n"
+          "    osample_x. Default None: not returned.\n\n"
           "osample_x=1, mu_x=[], t_offset=0 reproduces slitdec.c bit for bit.\n\n"
           "Returns\n"
           "-------\n"
@@ -381,6 +403,8 @@ NB_MODULE(charslit, m) {
           "        Extracted spectrum on the detector grid (mean of the fine bins)\n"
           "    spectrum_fine : ndarray (ncols * osample_x,)\n"
           "        Spectrum on the fine grid\n"
+          "    spectrum_out : ndarray (ncols * out_x,), only with out_x\n"
+          "        Spectrum on out_x bins per column\n"
           "    slitfunction : ndarray (ny,)\n"
           "        Slit illumination function\n"
           "    model : ndarray (nrows, ncols)\n"

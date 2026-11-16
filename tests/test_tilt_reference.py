@@ -83,3 +83,15 @@ def test_fine_spectrum_recovers_undersampled_lines():
     stair = np.repeat(extract(im, ycen, sc, osample=8, **LINEAR)["spectrum"], ox)
     assert err(r["spectrum_fine"]) < 0.02
     assert err(r["spectrum_fine"]) < 0.2 * err(stair)
+
+
+def test_out_x_is_mean_of_fine_bins(fp_swath):
+    _, im, ycen, sc, _ = fp_swath
+    r = extract(im, ycen, sc, osample=8, osample_x=8, out_x=2)
+    np.testing.assert_allclose(r["spectrum_out"], r["spectrum_fine"].reshape(NC * 2, 4).mean(axis=1),
+                               rtol=1e-13, atol=1e-9)
+    assert "spectrum_out" not in extract(im, ycen, sc, osample=8)
+    np.testing.assert_allclose(extract(im, ycen, sc, osample=8, out_x=1)["spectrum_out"], r["spectrum"],
+                               rtol=1e-12, atol=1e-9)
+    with pytest.raises(RuntimeError):
+        extract(im, ycen, sc, osample=8, osample_x=8, out_x=3)
