@@ -95,3 +95,63 @@ def test_out_x_is_mean_of_fine_bins(fp_swath):
                                rtol=1e-12, atol=1e-9)
     with pytest.raises(RuntimeError):
         extract(im, ycen, sc, osample=8, osample_x=8, out_x=3)
+
+
+class TestPropagatedUncertainty:
+    @pytest.fixture(scope="class")
+    def flat_runs(self):
+        nc, nr = 160, 60
+        m, ycen, sc, _ = make_swath(dict(kind="flat"), nc, nr, c1=4 / nr, nsub=8)
+        rng = np.random.default_rng(7)
+        out = {}
+        for name, kw in (("linear", LINEAR), ("weak", dict(osample_x=8, mu_x=[0, 0, 1e-6]))):
+            runs = []
+            for _ in range(40):
+                d = m + np.sqrt(m) * rng.standard_normal(m.shape)
+                a = (d, np.sqrt(m), np.ones(d.shape, np.uint8), ycen, sc, np.zeros(nr))
+                runs.append((charslit.slitdec(*a, osample=6, kappa=0.0, **kw),
+                             charslit.slitdec(*a, osample=6, kappa=0.0, uncertainty="propagated", **kw)))
+            out[name] = runs
+        return out, slice(20, nc - 20)
+
+    @pytest.mark.parametrize("name", ["linear", "weak"])
+    def test_matches_empirical_scatter(self, flat_runs, name):
+        """On a tilted slit the residual-based sigma is ~25 % low for the linear split
+        and for a weak penalty; the propagated one follows the actual scatter."""
+        runs, tr = flat_runs
+        spec = np.array([p["spectrum"][tr] for _, p in runs[name]])
+        emp = spec.std(0, ddof=1).mean()
+        resid = np.mean([r["uncertainty"][tr] for r, _ in runs[name]])
+        prop = np.mean([p["uncertainty"][tr] for _, p in runs[name]])
+        assert resid / emp < 0.88
+        assert 0.93 < prop / emp < 1.07
+
+    @pytest.mark.parametrize("name", ["linear", "weak"])
+    def test_lag1_covariance(self, flat_runs, name):
+        runs, tr = flat_runs
+        spec = np.array([p["spectrum"][tr] for _, p in runs[name]])
+        d = spec - spec.mean(0)
+        emp = (d[:, 1:] * d[:, :-1]).mean() / d.var()
+        cov = np.mean([p["covariance"][tr] for _, p in runs[name]], axis=0)
+        assert emp < -0.1
+        assert abs(cov[:, 1].mean() / cov[:, 0].mean() - emp) < 0.05
+
+    def test_outputs(self, fp_swath):
+        _, im, ycen, sc, _ = fp_swath
+        unc = np.sqrt(np.abs(im) + 1)
+        a = (im, unc, np.ones(im.shape, np.uint8), ycen, sc, np.zeros(NR))
+        r0 = charslit.slitdec(*a, kappa=0.0)
+        r1 = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", out_x=2, nlag=3)
+        r2 = charslit.slitdec(*a, kappa=0.0, uncertainty="scaled", out_x=2, nlag=3)
+        assert "covariance" not in r0 and "chi2" not in r0
+        np.testing.assert_array_equal(r0["spectrum"], r1["spectrum"])
+        assert r1["covariance"].shape == (NC * 2, 4)
+        assert np.isfinite(r1["covariance"]).all() and (r1["covariance"][2 * 30:-2 * 30, 0] > 0).all()
+        np.testing.assert_allclose(r2["uncertainty"], r1["uncertainty"] * np.sqrt(r1["chi2"]), rtol=1e-12)
+        np.testing.assert_allclose(r2["covariance"], r1["covariance"] * r1["chi2"], rtol=1e-12)
+        # detector-grid variance = variance of the mean of the two half-pixel bins
+        c = r1["covariance"]
+        var = (c[0::2, 0] + c[1::2, 0] + 2 * c[0::2, 1]) / 4
+        np.testing.assert_allclose(np.sqrt(var), r1["uncertainty"], rtol=1e-9, atol=1e-12)
+        with pytest.raises(RuntimeError):
+            charslit.slitdec(*a, uncertainty="horne")

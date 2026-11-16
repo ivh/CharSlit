@@ -20,7 +20,9 @@ typedef struct
    lambda_sL). lambda_sP: slitdec's unscaled first-difference penalty, applied
    between fine bins. t_offset: where along a y-subpixel the curvature is
    evaluated (0.5 centre, 0 slitdec.c). y_lower_lim: rows below the trace row in
-   the swath, < 0 means nrows / 2. See slitdec_ox.c. */
+   the swath, < 0 means nrows / 2. unc_mode 0: residual-based unc; 1: propagated
+   pixel variances; 2: propagated, scaled by chi^2; cov (may be NULL):
+   (ncols*out_x) x (nlag+1) covariances on the out_x grid. See slitdec_ox.c. */
 int slitdec_ox2(int ncols, int nrows, double *im, double *pix_unc,
                 unsigned char *mask, double *ycen, double *slitcurve,
                 double *slitdeltas, int osample, int osample_x,
@@ -29,4 +31,5 @@ int slitdec_ox2(int ncols, int nrows, double *im, double *pix_unc,
                 int use_preset, int weight_mode, double noise_floor,
                 double t_offset,
                 double *sP, double *sP_fine, double *sL, double *model,
-                double *unc, double *info, int y_lower_lim);
+                double *unc, double *info, int y_lower_lim,
+                int unc_mode, int out_x, int nlag, double *cov, double *chi2);

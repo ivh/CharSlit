@@ -13,7 +13,11 @@ plus `osample_x`, `mu_x`, `mu_y`, `t_offset`, `y_lower_lim`; extra outputs `spec
 regression runs with exactly these settings. The `osamp_spec` branch (sampling recovery
 from `spectrum_fine`) is folded in: same forward model, scripts ported, `lambda_fringe`
 dropped; never run `osample_x > 1` with `mu_x=[]` (exact null modes, no convergence);
-mu3 ≈ 1e-6 for sub-pixel lines at high S/N, default otherwise. The rest of this file describes master's
+mu3 ≈ 1e-6 for sub-pixel lines at high S/N, default otherwise. `out_x` returns the
+spectrum on a coarser sub-pixel grid; `uncertainty='propagated'|'scaled'` gives errors and
+covariances propagated through the solve (the default `'residual'` is 25 % low on tilted
+slits with the linear split or a weak penalty). Known issue: kappa clipping re-enables
+input-masked pixels (master too). The rest of this file describes master's
 `slitdec.c`; most of it (zeta layout, flat fast path, weights) carries over, but function
 and line references point to `slitdec.c`.
 

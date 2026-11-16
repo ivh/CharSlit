@@ -34,8 +34,21 @@ nb::dict slitdec_wrapper(
     std::optional<std::vector<double>> mu_y,
     double t_offset,
     std::optional<int> y_lower_lim,
-    std::optional<int> out_x
+    std::optional<int> out_x,
+    std::string uncertainty,
+    int nlag
 ) {
+    int unc_mode;
+    if (uncertainty == "residual")
+        unc_mode = 0;
+    else if (uncertainty == "propagated")
+        unc_mode = 1;
+    else if (uncertainty == "scaled")
+        unc_mode = 2;
+    else
+        throw std::runtime_error("uncertainty must be 'residual', 'propagated' or 'scaled'");
+    if (nlag < 0)
+        throw std::runtime_error("nlag must be >= 0");
     if (out_x.has_value() && (*out_x < 1 || osample_x % *out_x != 0))
         throw std::runtime_error("out_x must be >= 1 and divide osample_x");
     if (osample_x < 1)
@@ -211,6 +224,10 @@ nb::dict slitdec_wrapper(
     }
 
     // Call the C function
+    const int cov_x = out_x.has_value() ? *out_x : 1;
+    const size_t ncov = static_cast<size_t>(ncols) * cov_x;
+    double* cov = unc_mode > 0 ? new double[ncov * (nlag + 1)]() : nullptr;
+    double chi2 = 0.0;
     const std::vector<double>& muy = mu_y.has_value() ? *mu_y : std::vector<double>();
     int result = slitdec_ox2(
         ncols, nrows,
@@ -225,7 +242,8 @@ nb::dict slitdec_wrapper(
         noise_floor.has_value() ? *noise_floor : -1.0,
         t_offset,
         sP, sPf, sL, model, unc, info_all,
-        y_lower_lim.has_value() ? *y_lower_lim : -1
+        y_lower_lim.has_value() ? *y_lower_lim : -1,
+        unc_mode, cov_x, nlag, cov, &chi2
     );
     std::memcpy(info, info_all, 5 * sizeof(double));
     std::memcpy(info_ext, info_all + 5, 6 * sizeof(double));
@@ -292,6 +310,12 @@ nb::dict slitdec_wrapper(
         nb::capsule out_owner(sPo, [](void *p) noexcept { delete[] (double *) p; });
         result_dict["spectrum_out"] = nb::ndarray<nb::numpy, double>(sPo, 1, out_shape, out_owner);
     }
+    if (unc_mode > 0) {
+        size_t cov_shape[2] = {ncov, static_cast<size_t>(nlag + 1)};
+        nb::capsule cov_owner(cov, [](void *p) noexcept { delete[] (double *) p; });
+        result_dict["covariance"] = nb::ndarray<nb::numpy, double>(cov, 2, cov_shape, cov_owner);
+        result_dict["chi2"] = chi2;
+    }
     result_dict["info"] = info_array;
     result_dict["info_ox"] = ext_array;
     result_dict["mask"] = mask_array;
@@ -322,6 +346,8 @@ NB_MODULE(charslit, m) {
           nb::arg("t_offset") = 0.5,
           nb::arg("y_lower_lim") = nb::none(),
           nb::arg("out_x") = nb::none(),
+          nb::arg("uncertainty") = "residual",
+          nb::arg("nlag") = 2,
           "Slit decomposition with the spectrum oversampled along x (slitdec_ox)\n\n"
           "Parameters\n"
           "----------\n"
@@ -394,7 +420,17 @@ NB_MODULE(charslit, m) {
           "out_x : int, optional\n"
           "    Also return the spectrum on out_x bins per column (key spectrum_out):\n"
           "    the mean of osample_x / out_x adjacent fine bins. Must divide\n"
-          "    osample_x. Default None: not returned.\n\n"
+          "    osample_x. Default None: not returned.\n"
+          "uncertainty : {'residual', 'propagated', 'scaled'}, optional\n"
+          "    'residual' (default): from the data - model residuals per column, as\n"
+          "    slitdec; blind to the noise correlation a tilted slit introduces.\n"
+          "    'propagated': the pixel variances (pix_unc^2, or the fitted a*model+b\n"
+          "    with weights='model') carried through the spectrum solve, including\n"
+          "    tilt, weights, mask and penalty; the slit function is taken as known.\n"
+          "    Also returns covariance and chi2. 'scaled': the same times the reduced\n"
+          "    chi^2 of the residuals, for pix_unc of unknown scale.\n"
+          "nlag : int, optional\n"
+          "    Number of lags in the returned covariance (default 2).\n\n"
           "osample_x=1, mu_x=[], t_offset=0 reproduces slitdec.c bit for bit.\n\n"
           "Returns\n"
           "-------\n"
@@ -411,6 +447,11 @@ NB_MODULE(charslit, m) {
           "        Model reconstructed from spectrum and slit function\n"
           "    uncertainty : ndarray (ncols,)\n"
           "        Spectrum uncertainties\n"
+          "    covariance : ndarray (ncols * out_x, nlag + 1), only if not 'residual'\n"
+          "        covariance[j, l] = Cov(bin j, bin j + l) on the out_x grid\n"
+          "        (detector grid without out_x); column 0 is the variance\n"
+          "    chi2 : float, only if not 'residual'\n"
+          "        Reduced chi^2 of data - model against the pixel variances used\n"
           "    info : ndarray (5,)\n"
           "        Status information [success, cost, status, iter, delta_x].\n"
           "        status: 1 converged, -1 out of iterations,\n"

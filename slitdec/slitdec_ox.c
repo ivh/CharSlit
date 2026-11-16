@@ -830,6 +830,282 @@ static double penalty_resolution(const double *mu, int kmax)
     return M_PI / (0.5 * (lo + hi));
 }
 
+/* Data part of the sP normal equations on the fine grid: p_Aij = sum over usable pixels of
+   wfac * a a^T (full symmetric band), p_bj = sum of wfac * im * a, with a the pixel's
+   coefficients on the fine bins for the current sL. wfac NULL means 1. */
+static void sp_fill(int ncols, int nrows, int nf, int nx, int bx, int osample, int mzz,
+                    int fast_flat, const double *im, const unsigned char *mask,
+                    const double *wfac, const double *sL, const zeta_ref_ox *zeta,
+                    const int *m_zeta, const zeta_rng_ox *z_rng, const int *k0col,
+                    const double *d1col, double *flat_scratch, double *zw,
+                    double *p_Aij, double *p_bj)
+{
+    int xx, yy, j, m, n;
+
+    for (j = 0; j < nf; j++)
+        p_bj[j] = 0;
+    for (size_t i = 0; i < (size_t)nf * nx; i++)
+        p_Aij[i] = 0;
+
+    if (fast_flat)
+        flat_fill_sP(ncols, nrows, osample, bx, nx, im, mask, wfac, sL,
+                     k0col, d1col, flat_scratch, p_Aij, p_bj);
+    else
+        for (yy = 0; yy < nrows; yy++)
+        {
+            for (xx = 0; xx < ncols; xx++)
+            {
+                const int mz = m_zeta[mzeta_index(xx, yy)];
+                if (mz <= 0 || !mask[im_index(xx, yy)])
+                    continue;
+                const zeta_ref_ox *zrow = &zeta[zeta_index(xx, yy, 0)];
+                const double imv = im[im_index(xx, yy)];
+                const double wv = wfac ? wfac[im_index(xx, yy)] : 1.e0;
+                const zeta_rng_ox *zr = &z_rng[mzeta_index(xx, yy)];
+                const int k0 = zr->min_x;
+                const int rng = zr->max_x - k0;
+                for (n = 0; n <= rng; n++)
+                    zw[n] = 0.e0;
+                for (m = 0; m < mz; m++)
+                    zw[zrow[m].x - k0] += sL[zrow[m].iy] * zrow[m].w;
+                for (m = 0; m <= rng; m++)
+                {
+                    const double um = wv * zw[m];
+                    if (um == 0.e0)
+                        continue;
+                    const double *restrict uv = zw + m;
+                    double *restrict arow = &p_Aij[paij_index(k0 + m, bx)];
+                    const int dmax = rng - m;
+                    for (n = 0; n <= dmax; n++)
+                        arow[n] += um * uv[n];
+                    p_bj[k0 + m] += imv * um;
+                }
+            }
+        }
+
+    for (m = 1; m <= bx; m++)
+        for (j = 0; j < nf - m; j++)
+            p_Aij[paij_index(j + m, bx - m)] = p_Aij[paij_index(j, bx + m)];
+}
+
+/* Penalties and diagonal safeguards of the sP system, added to the data part */
+static void sp_penalties(double *p_Aij, int nf, int nx, int bx, int ox, int kx,
+                         const double *mux, double lambda_sP)
+{
+    int j, m;
+
+    if (lambda_sP > 0.e0)
+    {
+        const double lambda = lambda_sP;
+        p_Aij[paij_index(0, bx)] += lambda;
+        p_Aij[paij_index(0, bx + 1)] -= lambda;
+        for (j = 1; j < nf - 1; j++)
+        {
+            p_Aij[paij_index(j, bx - 1)] -= lambda;
+            p_Aij[paij_index(j, bx)] += lambda * 2.e0;
+            p_Aij[paij_index(j, bx + 1)] -= lambda;
+        }
+        p_Aij[paij_index(nf - 1, bx - 1)] -= lambda;
+        p_Aij[paij_index(nf - 1, bx)] += lambda;
+    }
+
+    /* Penalty mu_x * F * int (d^k sP/dx^k)^2 dx. With fine bins of width
+       h = 1/ox the data curvature of one bin is F h^2, so F = median
+       diagonal * ox^2, and the discrete form of the integral is
+       h^(1-2k) * sum (D_k sPf)^2: coefficient mu_x * diag_med * ox^(2k+1). */
+    if (kx > 0 || ox > 1)
+    {
+        double diag_med = median_positive(p_Aij + bx, nf, nx);
+        for (m = 1; m <= kx; m++)
+            add_difference_penalty(p_Aij, nf, nx, bx, m,
+                                   mux[m - 1] * diag_med * pow((double)ox, 2 * m + 1));
+        if (ox > 1) /* tiny ridge: keeps unsampled sub-pixel modes finite */
+            for (j = 0; j < nf; j++)
+                p_Aij[paij_index(j, bx)] += 1.e-9 * diag_med;
+    }
+
+#if REGULARIZE_DIAGONAL
+    {
+        double max_diag = 0.0;
+        for (j = 0; j < nf; j++)
+            if (p_Aij[paij_index(j, bx)] > max_diag)
+                max_diag = p_Aij[paij_index(j, bx)];
+        if (max_diag > 0.0)
+        {
+            double min_diag = max_diag * 1.0e-10;
+            for (j = 0; j < nf; j++)
+                if (p_Aij[paij_index(j, bx)] < min_diag)
+                    p_Aij[paij_index(j, bx)] = min_diag;
+        }
+    }
+#endif
+}
+
+/* Cholesky factor of a symmetric positive definite band matrix (full band, row-major,
+   nx = 2*bx+1). L[i*(bx+1)+k] = L(i, i-k). Returns -1 if a pivot is not positive. */
+static int band_cholesky(const double *A, int n, int nx, int bx, double *L)
+{
+    const int nl = bx + 1;
+    for (int i = 0; i < n; i++)
+        for (int k = min(bx, i); k >= 0; k--)
+        {
+            const int j = i - k;
+            double s = A[(size_t)i * nx + bx - k];
+            for (int q = k + 1; q <= min(bx, i); q++)
+                s -= L[(size_t)i * nl + q] * L[(size_t)j * nl + q - k];
+            if (k == 0)
+            {
+                if (!(s > 0.e0))
+                    return -1;
+                L[(size_t)i * nl] = sqrt(s);
+            }
+            else
+                L[(size_t)i * nl + k] = s / L[(size_t)j * nl];
+        }
+    return 0;
+}
+
+/* Noise covariance of the spectrum, C = N^-1 M N^-1, contracted onto output bins.
+   N: the sP system matrix of the last solve (data + penalties), M = A^T W V W A, the
+   same fill with weight^2 * pixel variance. An output bin is the mean b of ox/out_x
+   fine bins, so with y = N^-1 b: var = y^T M y, and the covariance with another bin
+   is y^T M y'. One banded solve per output bin; y decays away from the bin, and both
+   substitutions stop once it has fallen below 1e-10 of its maximum.
+   unc[x]: sigma of the detector-pixel spectrum. cov (may be NULL): for output bin j,
+   cov[j*(nlag+1)+l] = Cov(bin j, bin j+l). Columns within delta_x of the ends give 0.
+   Returns -1 if N is not positive definite. */
+static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, int nf,
+                         int nx, int bx, const double *N, const double *M,
+                         double *unc, double *cov)
+{
+    const int nl = bx + 1, nb = ox / out_x, R = nlag + 1;
+    const double eps = 1.e-10;
+    int x, q, i, k, l, r, c, rc = 0;
+    double *L = malloc((size_t)nf * nl * sizeof(double));
+    double *z = malloc(nf * sizeof(double));
+    double *ys = malloc((size_t)R * nf * sizeof(double));
+    double *mys = malloc((size_t)R * nf * sizeof(double));
+    double *yd = calloc(nf, sizeof(double)), *myd = calloc(nf, sizeof(double));
+    int *rng = malloc((size_t)R * 4 * sizeof(int)); /* lo, hi, mlo, mhi; lo > hi: unused */
+
+    if (L == NULL || z == NULL || ys == NULL || mys == NULL || yd == NULL || myd == NULL ||
+        rng == NULL || band_cholesky(N, nf, nx, bx, L) != 0)
+        rc = -1;
+    for (k = 0; k < R && rng != NULL; k++)
+    {
+        rng[4 * k] = 1;
+        rng[4 * k + 1] = 0;
+    }
+
+    for (x = 0; x < ncols && rc == 0; x++)
+    {
+        int dlo = nf, dhi = -1, dmlo = nf, dmhi = -1;
+        const int edge = (x < delta_x || x >= ncols - delta_x);
+        for (q = 0; q < out_x; q++)
+        {
+            const int j = x * out_x + q, slot = j % R;
+            double *y = ys + (size_t)slot * nf, *my = mys + (size_t)slot * nf;
+            int *rg = rng + 4 * slot;
+            if (cov != NULL)
+                for (l = 0; l <= nlag; l++)
+                    cov[(size_t)j * R + l] = 0.e0;
+            if (edge)
+            {
+                rg[0] = 1;
+                rg[1] = 0;
+                continue;
+            }
+            const int i0 = j * nb, i1 = i0 + nb - 1;
+            int lo = 0, hi = nf - 1;
+            double zmax = 0.e0, ymax = 0.e0, s;
+
+            /* L z = b */
+            for (i = i0; i < nf; i++)
+            {
+                s = (i <= i1) ? 1.e0 / nb : 0.e0;
+                for (k = 1; k <= min(bx, i - i0); k++)
+                    s -= L[(size_t)i * nl + k] * z[i - k];
+                z[i] = s / L[(size_t)i * nl];
+                if (fabs(z[i]) > zmax)
+                    zmax = fabs(z[i]);
+                if (i - i1 >= bx)
+                {
+                    double t = 0.e0;
+                    for (k = 0; k <= bx && i - k >= i0; k++)
+                        if (fabs(z[i - k]) > t)
+                            t = fabs(z[i - k]);
+                    if (t < eps * zmax)
+                    {
+                        hi = i;
+                        break;
+                    }
+                }
+            }
+            /* L^T y = z */
+            for (i = hi; i >= 0; i--)
+            {
+                s = (i >= i0) ? z[i] : 0.e0;
+                for (k = 1; k <= min(bx, hi - i); k++)
+                    s -= L[(size_t)(i + k) * nl + k] * y[i + k];
+                y[i] = s / L[(size_t)i * nl];
+                if (fabs(y[i]) > ymax)
+                    ymax = fabs(y[i]);
+                if (i0 - i >= bx)
+                {
+                    double t = 0.e0;
+                    for (k = 0; k <= bx; k++)
+                        if (fabs(y[i + k]) > t)
+                            t = fabs(y[i + k]);
+                    if (t < eps * ymax)
+                    {
+                        lo = i;
+                        break;
+                    }
+                }
+            }
+            const int mlo = max(0, lo - bx), mhi = min(nf - 1, hi + bx);
+            for (r = mlo; r <= mhi; r++)
+            {
+                s = 0.e0;
+                for (c = max(lo, r - bx); c <= min(hi, r + bx); c++)
+                    s += M[(size_t)r * nx + bx + c - r] * y[c];
+                my[r] = s;
+            }
+            rg[0] = lo; rg[1] = hi; rg[2] = mlo; rg[3] = mhi;
+
+            if (cov != NULL)
+                for (l = 0; l <= nlag && l <= j; l++)
+                {
+                    const int *ro = rng + 4 * ((j - l) % R);
+                    const double *myo = mys + (size_t)((j - l) % R) * nf;
+                    if (ro[0] > ro[1])
+                        continue;
+                    s = 0.e0;
+                    for (r = max(lo, ro[2]); r <= min(hi, ro[3]); r++)
+                        s += y[r] * myo[r];
+                    cov[(size_t)(j - l) * R + l] = s;
+                }
+            for (r = lo; r <= hi; r++)
+                yd[r] += y[r] / out_x;
+            for (r = mlo; r <= mhi; r++)
+                myd[r] += my[r] / out_x;
+            dlo = min(dlo, lo); dhi = max(dhi, hi);
+            dmlo = min(dmlo, mlo); dmhi = max(dmhi, mhi);
+        }
+        double v = 0.e0;
+        for (r = dlo; r <= dhi; r++)
+            v += yd[r] * myd[r];
+        unc[x] = edge ? 0.e0 : sqrt(v);
+        for (r = dlo; r <= dhi; r++)
+            yd[r] = 0.e0;
+        for (r = dmlo; r <= dmhi; r++)
+            myd[r] = 0.e0;
+    }
+
+    free(L); free(z); free(ys); free(mys); free(yd); free(myd); free(rng);
+    return rc;
+}
+
 int slitdec_ox2(    int ncols,
                     int nrows,
                     double *im,
@@ -858,7 +1134,12 @@ int slitdec_ox2(    int ncols,
                     double *model,
                     double *unc,
                     double *info,
-                    int y_lower_lim)
+                    int y_lower_lim,
+                    int unc_mode,
+                    int out_x,
+                    int nlag,
+                    double *cov,
+                    double *chi2)
 {
     /* Parameters as slitdec() except:
        osample_x : fine spectrum bins per detector column (>= 1)
@@ -881,6 +1162,15 @@ int slitdec_ox2(    int ncols,
        lambda_sP : slitdec's unscaled penalty on first differences, applied
                    between adjacent fine bins (0: off; prefer mu_x)
        t_offset  : see zeta_tensors_ox
+       unc_mode  : 0: unc from the data - model residuals (slitdec). 1: pixel variances
+                   propagated through the last sP solve (propagate_unc), sL taken as
+                   known; the variances are pix_unc^2, or the fitted a * model + b with
+                   weight_mode 2. 2: as 1, scaled by the reduced chi^2 of the residuals.
+       out_x, nlag, cov : with unc_mode > 0 and cov != NULL, covariances on the grid of
+                   out_x bins per column (out_x divides osample_x) for lags 0..nlag,
+                   cov[(ncols*out_x) x (nlag+1)]
+       chi2      : out, may be NULL: reduced chi^2 of the residuals against those
+                   variances (unc_mode > 0), NaN if the propagation failed
        y_lower_lim : rows below the central row of the swath, i.e. the
                    trace sits at row y_lower_lim + ycen[x] - (int)ycen[x]
                    (IDL REDUCE convention). < 0 means nrows / 2 (slitdec). */
@@ -1258,96 +1548,9 @@ int slitdec_ox2(    int ncols,
         }
 
         /* Spectrum system on the fine grid */
-        for (j = 0; j < nf; j++)
-            p_bj[j] = 0;
-        for (size_t i = 0; i < (size_t)nf * nx; i++)
-            p_Aij[i] = 0;
-
-        if (fast_flat)
-            flat_fill_sP(ncols, nrows, osample, bx, nx, im, mask, wpix, sL,
-                         k0col, d1col, flat_scratch, p_Aij, p_bj);
-        else
-            for (yy = 0; yy < nrows; yy++)
-            {
-                for (xx = 0; xx < ncols; xx++)
-                {
-                    const int mz = m_zeta[mzeta_index(xx, yy)];
-                    if (mz <= 0 || !mask[im_index(xx, yy)])
-                        continue;
-                    const zeta_ref_ox *zrow = &zeta[zeta_index(xx, yy, 0)];
-                    const double imv = im[im_index(xx, yy)];
-                    const double wv = wpix ? wpix[im_index(xx, yy)] : 1.e0;
-                    const zeta_rng_ox *zr = &z_rng[mzeta_index(xx, yy)];
-                    const int k0 = zr->min_x;
-                    const int rng = zr->max_x - k0;
-                    for (n = 0; n <= rng; n++)
-                        zw[n] = 0.e0;
-                    for (m = 0; m < mz; m++)
-                        zw[zrow[m].x - k0] += sL[zrow[m].iy] * zrow[m].w;
-                    for (m = 0; m <= rng; m++)
-                    {
-                        const double um = wv * zw[m];
-                        if (um == 0.e0)
-                            continue;
-                        const double *restrict uv = zw + m;
-                        double *restrict arow = &p_Aij[paij_index(k0 + m, bx)];
-                        const int dmax = rng - m;
-                        for (n = 0; n <= dmax; n++)
-                            arow[n] += um * uv[n];
-                        p_bj[k0 + m] += imv * um;
-                    }
-                }
-            }
-
-        for (m = 1; m <= bx; m++)
-            for (j = 0; j < nf - m; j++)
-                p_Aij[paij_index(j + m, bx - m)] = p_Aij[paij_index(j, bx + m)];
-
-        if (lambda_sP > 0.e0)
-        {
-            lambda = lambda_sP;
-            p_Aij[paij_index(0, bx)] += lambda;
-            p_Aij[paij_index(0, bx + 1)] -= lambda;
-            for (j = 1; j < nf - 1; j++)
-            {
-                p_Aij[paij_index(j, bx - 1)] -= lambda;
-                p_Aij[paij_index(j, bx)] += lambda * 2.e0;
-                p_Aij[paij_index(j, bx + 1)] -= lambda;
-            }
-            p_Aij[paij_index(nf - 1, bx - 1)] -= lambda;
-            p_Aij[paij_index(nf - 1, bx)] += lambda;
-        }
-
-        /* Penalty mu_x * F * int (d^k sP/dx^k)^2 dx. With fine bins of width
-           h = 1/ox the data curvature of one bin is F h^2, so F = median
-           diagonal * ox^2, and the discrete form of the integral is
-           h^(1-2k) * sum (D_k sPf)^2: coefficient mu_x * diag_med * ox^(2k+1). */
-        if (kx > 0 || ox > 1)
-        {
-            double diag_med = median_positive(p_Aij + bx, nf, nx);
-            for (m = 1; m <= kx; m++)
-                add_difference_penalty(p_Aij, nf, nx, bx, m,
-                                       mux[m - 1] * diag_med * pow((double)ox, 2 * m + 1));
-            if (ox > 1) /* tiny ridge: keeps unsampled sub-pixel modes finite */
-                for (j = 0; j < nf; j++)
-                    p_Aij[paij_index(j, bx)] += 1.e-9 * diag_med;
-        }
-
-#if REGULARIZE_DIAGONAL
-        {
-            double max_diag = 0.0;
-            for (j = 0; j < nf; j++)
-                if (p_Aij[paij_index(j, bx)] > max_diag)
-                    max_diag = p_Aij[paij_index(j, bx)];
-            if (max_diag > 0.0)
-            {
-                double min_diag = max_diag * 1.0e-10;
-                for (j = 0; j < nf; j++)
-                    if (p_Aij[paij_index(j, bx)] < min_diag)
-                        p_Aij[paij_index(j, bx)] = min_diag;
-            }
-        }
-#endif
+        sp_fill(ncols, nrows, nf, nx, bx, osample, mzz, fast_flat, im, mask, wpix, sL,
+                zeta, m_zeta, z_rng, k0col, d1col, flat_scratch, zw, p_Aij, p_bj);
+        sp_penalties(p_Aij, nf, nx, bx, ox, kx, mux, lambda_sP);
         bandsol(p_Aij, p_bj, nf, nx);
 
         for (j = 0; j < nf; j++)
@@ -1516,6 +1719,64 @@ int slitdec_ox2(    int ncols,
     {
         norm = unc_norm[x] - norm_sq[x] / unc_norm[x];
         unc[x] = sqrt(unc[x] / norm * nrows);
+    }
+
+    if (chi2 != NULL)
+        *chi2 = NAN;
+    if (unc_mode > 0 && out_x >= 1 && ox % out_x == 0 && nlag >= 0)
+    {
+        /* Pixel variances, then M = fill with weight^2 * variance and N rebuilt
+           (bandsol overwrote it) from the final sL, weights and mask */
+        double *vfac = malloc((size_t)npix * sizeof(double));
+        double *Mb = malloc((size_t)nf * nx * sizeof(double));
+        double va = 0.e0, vb = 0.e0, c2 = 0.e0;
+        long nc2 = 0;
+        if (weight_mode == 2)
+            variance_fit(model, pix_unc, mask, npix, noise_floor, !fit_b, &va, &vb);
+        for (y = 0; y < nrows; y++)
+            for (x = 0; x < ncols; x++)
+            {
+                const long i = im_index(x, y);
+                const double u = pix_unc[i];
+                double v = weight_mode == 2 ? va * fmax(model[i], 0.e0) + vb
+                                            : ((isfinite(u) && u > 0.e0) ? u * u : 0.e0);
+                const double w = wpix ? wpix[i] : 1.e0;
+                if (!mask[i] || !(v > 0.e0))
+                    v = 0.e0;
+                else if (x >= delta_x && x < ncols - delta_x)
+                {
+                    const double res = im[i] - model[i];
+                    c2 += res * res / v;
+                    nc2++;
+                }
+                vfac[i] = w * w * v;
+            }
+        nc2 -= (ncols - 2 * delta_x) + nrows;
+        c2 = nc2 > 0 ? c2 / nc2 : NAN;
+
+        sp_fill(ncols, nrows, nf, nx, bx, osample, mzz, fast_flat, im, mask, vfac, sL,
+                zeta, m_zeta, z_rng, k0col, d1col, flat_scratch, zw, Mb, p_bj);
+        sp_fill(ncols, nrows, nf, nx, bx, osample, mzz, fast_flat, im, mask, wpix, sL,
+                zeta, m_zeta, z_rng, k0col, d1col, flat_scratch, zw, p_Aij, p_bj);
+        sp_penalties(p_Aij, nf, nx, bx, ox, kx, mux, lambda_sP);
+        if (propagate_unc(ncols, ox, out_x, nlag, delta_x, nf, nx, bx, p_Aij, Mb, unc, cov) == 0)
+        {
+            if (chi2 != NULL)
+                *chi2 = c2;
+            if (unc_mode == 2 && isfinite(c2))
+            {
+                for (x = 0; x < ncols; x++)
+                    unc[x] *= sqrt(c2);
+                if (cov != NULL)
+                    for (size_t i = 0; i < (size_t)ncols * out_x * (nlag + 1); i++)
+                        cov[i] *= c2;
+            }
+        }
+        else if (cov != NULL)
+            for (size_t i = 0; i < (size_t)ncols * out_x * (nlag + 1); i++)
+                cov[i] = NAN;
+        free(vfac);
+        free(Mb);
     }
 
     for (x = 0; x < delta_x; x++)

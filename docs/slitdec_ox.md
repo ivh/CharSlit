@@ -68,6 +68,48 @@ is anticorrelated (lag-1 −0.16 to −0.31) and mostly averages out: variance o
 1.09-1.12 for both the linear split and mu3 = 1e-6, 1.02-1.04 for the default. The reported
 uncertainty is ≈ 0.99 √S in every case, i.e. 1.3× too small wherever var/mean ≈ 1.7.
 
+## Uncertainties (`uncertainty=`)
+
+`'residual'` (default, as slitdec): per column from data − model. It is ≈ √S whatever the
+extraction noise is, so 1.3× too small on a tilted slit with the linear split or a weak
+penalty (table above). The cr2res PIPE-12658 formula (Horne, per column from pix_unc) has
+the same blind spot (0.73-0.77 in the same test) and was not ported.
+
+`'propagated'`: the pixel variances carried through the last spectrum solve,
+C = N⁻¹ M N⁻¹ with N = AᵀWA + penalties and M = AᵀW V W A (`propagate_unc`). One banded
+solve per output bin (y = N⁻¹b, var = yᵀMy, covariances yᵀMy′), each cut off where y has
+decayed to 1e-10. V is `pix_unc²`, or the fitted a·model + b with `weights='model'`.
+Returns `uncertainty` (detector grid), `covariance` (ncols·out_x, nlag+1) on the `out_x`
+grid (lags 0..`nlag`, default 2) and `chi2`, the reduced χ² of the residuals against V.
+`'scaled'` multiplies the variances by `chi2`, for pix_unc of unknown scale.
+
+Reported σ / empirical scatter (`scripts/ox_unc_check.py`, flat spectrum, 40 realisations,
+photon noise; all four weight modes agree to ±0.01):
+
+| shear | setting | residual | propagated | on out_x = 2 | lag-1 corr. emp / predicted |
+|---|---|---|---|---|---|
+| 0 | linear | 1.01 | 1.03 | | 0.00 / 0.00 |
+| 2 px | linear | 0.73 | 1.03 | | −0.32 / −0.32 |
+| 8 px | linear | 0.77 | 1.02 | | −0.26 / −0.27 |
+| 2-8 px | ox 8, default | 0.99-1.00 | 1.02-1.03 | 1.02 | −0.02 / −0.02 (out_x 2: +0.49 / +0.49) |
+| 2-8 px | ox 8, mu3 = 1e-6 | 0.74-0.77 | 1.02-1.03 | 1.03 | −0.17 / −0.17 (out_x 2: −0.36 / −0.37) |
+
+With 30 e⁻ read noise: propagated 1.03-1.06 (20 realisations), residual 0.79-0.83 and
+1.07-1.12. The 2-3 % excess is partly the small-sample bias of the empirical σ.
+Cost on real frames: +2-3 % of the run time (ANDES_R_FP1 2.00 → 2.06 s at ox 8).
+
+Limits: the slit function is taken as known; the number is the noise of the regularised
+estimate and says nothing about smoothing bias; and it is only as good as V. On the test
+frames, whose fixture pix_unc is √(|im|+1) rather than a real variance, chi2 is 3-95, so
+use `'scaled'` or check `chi2` before trusting `'propagated'` on real data.
+
+**Outlier rejection re-enables masked pixels.** With `kappa > 0` the mask is rewritten each
+iteration from |model − im| < kappa·dev, ignoring the input mask (slitdec.c on master does
+the same): on CRIRES2 10089 of 12366 input-masked pixels come back as good. They enter the
+fit with whatever `im` holds there, and with the fixture's pix_unc = 1e10 for them the
+propagated variance explodes (correctly, for the solve as done). Not changed here: fixing
+it alters the goldens.
+
 ## Regression
 
 `osample_x=1, mu_x=[], t_offset=0` reproduces master's slitdec.c: `tests/test_regression.py`
@@ -244,4 +286,5 @@ objective next step.
   (≈ 90 MB for a 500 × 136 swath at 8/8; the list length is now counted exactly).
 - Speed: no flat fast path for osample_x > 1; 5× (ox 8) to 10× (ox 16) slower than
   slitdec.c on a tilted swath.
-- The uncertainty estimate is unchanged (residual based, per column).
+- The default uncertainty is still the residual-based one; `'propagated'` has not been
+  checked on real frames with real variances, nor with a varying slit function.
