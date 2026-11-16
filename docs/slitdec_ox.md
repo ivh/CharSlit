@@ -52,6 +52,22 @@ Shear 2 and 16 px and `model` weights give the same picture (osample_x = 8: var/
 1.02–1.04, bias 1e-4). The reported SIG (residual based) is ≈ √S in all cases, which
 is now correct for osample_x ≥ 8 and 1.3× too small for slitdec.c.
 
+Re-measured 2026-11-16 (`scripts/ox_noise.py <shear> <weights> 60`), var/mean relative to
+a vertical slit, identical for `none` and `model` weights to ±0.01:
+
+| shear [px] | linear | ox 4 | ox 8 | ox 16 | ox 8, mu3 = 1e-6 |
+|---|---|---|---|---|---|
+| 0.5 | 1.26 | 1.00 | 0.96 | 0.96 | 1.11 |
+| 2 | 1.91 | 1.08 | 1.03 | 1.02 | 1.84 |
+| 8 | 1.74 | 1.08 | 1.03 | 1.02 | 1.68 |
+| 16 | 1.77 | 1.09 | 1.04 | 1.03 | 1.71 |
+
+The noise is whitened by the penalty, not by the fine bins: at mu3 = 1e-6 (the
+sampling-recovery setting) the excess is back, while the line bias stays at 1e-4. The excess
+is anticorrelated (lag-1 −0.16 to −0.31) and mostly averages out: variance of 8-pixel sums
+1.09-1.12 for both the linear split and mu3 = 1e-6, 1.02-1.04 for the default. The reported
+uncertainty is ≈ 0.99 √S in every case, i.e. 1.3× too small wherever var/mean ≈ 1.7.
+
 ## Regression
 
 `osample_x=1, mu_x=[], t_offset=0` reproduces master's slitdec.c: `tests/test_regression.py`

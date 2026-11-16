@@ -45,6 +45,7 @@ print(f"shear {c1*NR:.1f} px, weights {weights}: vertical-slit reference var {v0
 confs = [("linear (current)", lambda d: slitdec_orig(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, kappa=0, weights=weights)),
          ("ox=4  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=4, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights)),
          ("ox=8  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=8, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights)),
+         ("ox=8  D3 mu=1e-6", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=8, mu_x=[0, 0, 1e-6], kappa=0, weights=weights)),
          ("ox=16 D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=16, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights))]
 for name, fn in confs:
     t = time.time(); v, l1, kb = stats(fn, mflat, tflat); dt = (time.time() - t) / nreal
