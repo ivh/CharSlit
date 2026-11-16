@@ -2,6 +2,33 @@
 
 This document contains important information about the CharSlit codebase, build system, and key implementation details that were discovered during development.
 
+## slitdec_ox (November 2026)
+
+`slitdec/slitdec.c` is now N. Piskunov's slitdec_ox (merged from
+https://github.com/nikolai-piskunov/slitdec_ox, GPL-3.0), under the old file and function
+names. **The defaults are the historic slitdec** (`osample_x=1`, no `mu_x`, `t_offset=0`):
+a plain call is bit-identical to before, and `tests/test_regression.py` /
+`tests/test_slitdec.py` are the old files. Opt-in: `osample_x=8, t_offset=0.5` solves the
+spectrum on fine bins per column with box overlap and a penalty in physical units (`mu_x`,
+None = k=3 at 1.64e-4 when `osample_x > 1`); extra outputs `spectrum_fine`, `info_ox`.
+The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
+- Never `osample_x > 1` with `mu_x=[]` (exact null modes, no convergence). mu3 ≈ 1e-6 for
+  sub-pixel lines at high S/N, the default penalty otherwise.
+- `t_offset=0` keeps the historic half-subpixel error of the tilt reference (lines shifted
+  by c1/(2·osample)); 0.5 is correct but opt-in, science and calibration must agree.
+- `out_x` returns the spectrum on a coarser sub-pixel grid; `uncertainty='propagated'|
+  'scaled'` gives errors and covariances propagated through the solve (the default
+  `'residual'` is 25 % low on tilted slits with the linear split or a weak penalty).
+- The `osamp_spec` branch (sampling recovery) is folded in; `lambda_fringe` is gone.
+- Known issue: kappa clipping re-enables zero-filled NaN pixels, parked in LATER.md.
+- Docs: docs/slitdec_ox.md (reference), docs/ox_experiments.md (all measurements),
+  docs/bisector_experiments.md (bisector primer, experiment designs); LATER.md holds
+  the deferred work, first of all validating the opt-in modes on real frames; new tests in tests/test_ox.py.
+
+The rest of this file was written for the engine before slitdec_ox. Structure (zeta layout,
+flat fast path at `osample_x=1`, weights) carries over; line references and some names
+(`zeta_tensors` is now `zeta_tensors_ox`, `MAX_ZETA_Z` is counted exactly) do not.
+
 ## Project Overview
 
 CharSlit is a Python wrapper for the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:

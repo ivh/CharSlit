@@ -81,6 +81,8 @@ class TestOutputStructure:
             "info",
             "mask",
             "return_code",
+            "spectrum_fine",
+            "info_ox",
         }
         assert set(result.keys()) == expected_keys
         save_test_data(data["im"], result["model"])

@@ -57,3 +57,5 @@ dist/
 *.egg
 
 external
+
+.claude/

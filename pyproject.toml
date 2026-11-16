@@ -7,6 +7,8 @@ name = "charslit"
 version = "0.1.0"
 description = "Slit decomposition with slit characterization"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.20.0",
