@@ -20,10 +20,10 @@ The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
   'scaled'` gives errors and covariances propagated through the solve (the default
   `'residual'` is 25 % low on tilted slits with the linear split or a weak penalty).
 - The `osamp_spec` branch (sampling recovery) is folded in; `lambda_fringe` is gone.
-- Known issue: kappa clipping re-enables zero-filled NaN pixels, parked in mask_nan.md.
+- Known issue: kappa clipping re-enables zero-filled NaN pixels, parked in LATER.md.
 - Docs: docs/slitdec_ox.md (reference), docs/ox_experiments.md (all measurements),
-  docs/bisector_experiments.md (bisector primer, experiment designs); deferred ideas in
-  LATER.md; new tests in tests/test_ox.py.
+  docs/bisector_experiments.md (bisector primer, experiment designs); LATER.md holds
+  the deferred work, first of all validating the opt-in modes on real frames; new tests in tests/test_ox.py.
 
 The rest of this file was written for the engine before slitdec_ox. Structure (zeta layout,
 flat fast path at `osample_x=1`, weights) carries over; line references and some names

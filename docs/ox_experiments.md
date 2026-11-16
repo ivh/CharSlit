@@ -33,7 +33,7 @@ except where a CRIRES+ or ANDES file is named.
    wherever the noise excess of point 2 is present. Propagating the pixel variances
    through the solve gives 1.02-1.03 everywhere and the right neighbour covariances.
 8. **Found along the way:** master evaluates the tilt half a subpixel off; outlier
-   rejection re-enables zero-filled NaN pixels ([../mask_nan.md](../mask_nan.md)).
+   rejection re-enables zero-filled NaN pixels ([../LATER.md](../LATER.md)).
 
 ## 1. Integration and regression
 
@@ -281,4 +281,4 @@ Recorded because some of them were written into docs or commit messages on the w
   sweep (1, 2, 5 px) and on `ncols` is not mapped (see LATER.md).
 - PyReduce still reads `PYREDUCE_CHARSLIT_OSAMP_SPEC` / `LAMBDA_FRINGE`; they need renaming
   to `osample_x` / `mu_x` before it can use this branch for sampling recovery.
-- [../mask_nan.md](../mask_nan.md) and [../LATER.md](../LATER.md).
+- [../LATER.md](../LATER.md): validation on real frames, the NaN issue, phase diagnostics.

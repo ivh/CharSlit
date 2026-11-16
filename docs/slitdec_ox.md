@@ -107,7 +107,7 @@ correlations match the measured ones to 0.01. Cost +2-3 % of the run time.
 Limits: the slit function is taken as known; the number is the noise of the regularised
 estimate and says nothing about smoothing bias; and it is only as good as V. Use `'scaled'`
 or check `chi2` when pix_unc is not a real variance. Input-masked pixels that the outlier
-rejection re-enables enter with their pix_unc, see [../mask_nan.md](../mask_nan.md).
+rejection re-enables enter with their pix_unc, see [../LATER.md](../LATER.md).
 
 ## Regression and tests
 
