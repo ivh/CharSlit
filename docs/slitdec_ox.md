@@ -138,8 +138,10 @@ signal; mpx):
 
 - The position-dependent bisector error of the linear split (60-144 mpx) is gone for any
   `osample_x ≥ 2` with any penalty tried (phase sd at the level the noise allows).
-- `osample_x = 8` is as good as 2-4 on every metric and better on rms_cont, so there is no
-  reason for a separate small-s mode; the two purposes differ only in `mu_x`.
+- `osample_x = 8` is as good as 2-4 on the wide LSF and clearly better on the narrow one
+  (phase sd 0.3-1 mpx against 1-6 at s = 3 and 7-19 at s = 2), and better on rms_cont
+  throughout, so there is no reason for a separate small-s mode; the two purposes differ
+  only in `mu_x`. Figures: `scratch/ox_bis_study_<case>.png` (mu3 from 1e-7 to 1e-3).
 - The penalty strength is a noise/resolution trade. The default is right for lines of
   FWHM ≳ 1.8 px (2 % broader, lowest noise) and at low S/N (wide LSF, peak ~100 counts: BIS
   noise sd 14 vs 29 mpx for 1e-6). For lines narrower than a pixel at high S/N use
@@ -150,6 +152,35 @@ signal; mpx):
   7-line stack, truth −162 mpx: staircase −397; ox s = 2/3/4 at mu3 = 1e-6: −157/−182/−194,
   8.2e-6: −178/−166/−168, default: −175/−148/−146. (`lambda_fringe = 1e-3` gave −330..−365.)
   Not analysed further (per-line metrics, s = 8).
+
+**The other cases of OSAMP_EXPERIMENTS.md, re-run** (single realisation each, as there;
+`experiment_synthetic_lsf.py`, tags `_ox`, `_notilt`, `_lowsn`, `_ssweep`, `_narrow`, `_wide`):
+
+| case (true FWHM) | s = 1 | s = 2 | s = 3 | at mu3 |
+|---|---|---|---|---|
+| baseline (0.894): FWHM | 1.114 | 0.956 | 0.968 | 1e-6 |
+| baseline: rms_cont | 0.108 | 0.080 | 0.050 | 1e-6 |
+| narrow (0.444): FWHM | 0.991 | 0.722 | 0.713 | 1e-6 |
+| narrow: rms_cont | 0.240 | 0.194 (8.2e-6) | 0.157 | 1e-6 |
+| wide (1.785): FWHM | 1.772 | 1.786 | 1.822 | 1e-6 |
+| wide: rms_cont | 0.058 | 0.027 | 0.018 | any |
+| low S/N (peak 87): rms_cont | 0.112 | 0.077 (8.2e-6) | 0.054 | 1e-6 |
+| no tilt (0.001 px/row): rms_cont | 0.098 | 0.083 | 0.073 | 1e-6 |
+
+- Baseline s sweep at mu3 = 1e-6: rms_cont 0.108, 0.080, 0.050, 0.039, 0.032, 0.029, 0.024
+  for s = 1, 2, 3, 4, 5, 6, 8, with FWHM 0.95-0.97 throughout: no saturation at s = 5 and no
+  undershoot, unlike the unregularised sweep.
+- Without tilt nothing is gained (FWHM 1.18-1.28 against 1.18 at s = 1) but nothing breaks
+  either; the unregularised s = 2 gave rms_cont 0.27 there.
+- CRIRES+ at xbin = 2 (commensurate), BIS of the stack, truth −162 mpx: staircase −260;
+  s = 2/3/4 at mu3 = 1e-6: −228/−201/−140, 8.2e-6: −169/−195/−156, default: −157/−165/−143.
+- Hsim at s = 3: max|fine − staircase| stays at 19-29 % of the peak for mu3 from 0 to 1e-2
+  (29 % unpenalised). A derivative penalty pulls towards a smooth curve, not the staircase,
+  and a smooth curve through an emission line differs from its staircase by about that
+  much. So this number is not a measure of fringe noise, and the conclusion in
+  OSAMP_SPEC.md that Hsim's sub-pixel content is all fringe does not follow from it.
+- June outputs of the old engine that the re-runs would have overwritten are in
+  `scratch/old_engine/` (the wide s-sweep, bisector and √3 plots were already overwritten).
 
 Cost on real frames, ms per iteration at `osample_x` = 1/2/3/8 (`scripts/bench.py 2 <ox> 1.2e6`):
 ANDES_R_FP1 404 × 2556: 73/113/143/325; CRIRES2 176 × 2048: 21/32/40/91 (osamp_spec:
