@@ -1,6 +1,20 @@
+"""Extraction noise and line bias of slitdec_ox vs the linear two-column split.
+Usage: ox_noise.py [shear_px] [weights] [nreal]"""
 import numpy as np, time, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from synth import *
-from pyslitdec_ox import slitdec_ox, slitdec_orig
+import charslit
+
+
+def slitdec_ox(im, pix_unc, ycen, slitcurve, **kw):
+    return charslit.slitdec(im, pix_unc, np.ones(im.shape, np.uint8), ycen, slitcurve,
+                            np.zeros(im.shape[0]), **kw)
+
+
+def slitdec_orig(im, pix_unc, ycen, slitcurve, **kw):
+    return slitdec_ox(im, pix_unc, ycen, slitcurve, osample_x=1, mu_x=[], t_offset=0.0, **kw)
+
 NC, NR = 400, 136
 c1 = float(sys.argv[1]) / NR if len(sys.argv) > 1 else 8 / NR
 weights = sys.argv[2] if len(sys.argv) > 2 else "none"
@@ -29,9 +43,9 @@ ref = lambda d: slitdec_orig(d, pix_unc=np.sqrt(np.maximum(d, 1)), ycen=ycen, sl
 v0, _, kb0 = stats(ref, m0, tflat)
 print(f"shear {c1*NR:.1f} px, weights {weights}: vertical-slit reference var {v0:.1f} (expected ~{tflat.mean():.0f})")
 confs = [("linear (current)", lambda d: slitdec_orig(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, kappa=0, weights=weights)),
-         ("ox=4  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=4, mu_x=1.64e-4, kappa=0, weights=weights)),
-         ("ox=8  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=8, mu_x=1.64e-4, kappa=0, weights=weights)),
-         ("ox=16 D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=16, mu_x=1.64e-4, kappa=0, weights=weights))]
+         ("ox=4  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=4, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights)),
+         ("ox=8  D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=8, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights)),
+         ("ox=16 D3 mu=1.64e-4", lambda d: slitdec_ox(d, pix_unc=np.sqrt(np.maximum(d,1)), ycen=ycen, slitcurve=sc, osample=8, osample_x=16, mu_x=[0, 0, 1.64e-4], kappa=0, weights=weights))]
 for name, fn in confs:
     t = time.time(); v, l1, kb = stats(fn, mflat, tflat); dt = (time.time() - t) / nreal
     e = fn(mfp)["spectrum"]; r = (e - tfp)[TR]

@@ -5,9 +5,11 @@
 #include <optional>
 #include <string>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <vector>
 
 extern "C" {
-#include "slitdec.h"
+#include "slitdec_ox.h"
 }
 
 namespace nb = nanobind;
@@ -26,8 +28,17 @@ nb::dict slitdec_wrapper(
     double kappa,
     std::optional<nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>> preset_slitfunc,
     std::string weights,
-    std::optional<double> noise_floor
+    std::optional<double> noise_floor,
+    int osample_x,
+    std::vector<double> mu_x,
+    std::optional<std::vector<double>> mu_y,
+    double t_offset,
+    std::optional<int> y_lower_lim
 ) {
+    if (osample_x < 1)
+        throw std::runtime_error("osample_x must be >= 1");
+    if (mu_x.size() > SLITDEC_OX_KMAX || (mu_y.has_value() && mu_y->size() > SLITDEC_OX_KMAX))
+        throw std::runtime_error("mu_x and mu_y take at most 15 derivative orders");
     int weight_mode;
     if (weights == "none")
         weight_mode = 0;
@@ -112,6 +123,8 @@ nb::dict slitdec_wrapper(
     size_t model_shape[2] = {static_cast<size_t>(nrows), static_cast<size_t>(ncols)};
     size_t unc_shape[1] = {static_cast<size_t>(ncols)};
     size_t info_shape[1] = {5};
+    size_t sPf_shape[1] = {static_cast<size_t>(ncols) * osample_x};
+    size_t ext_shape[1] = {6};
 
     // Value-initialized so early failure returns (e.g. excessive curvature)
     // hand zeros to Python instead of uninitialized memory
@@ -120,6 +133,10 @@ nb::dict slitdec_wrapper(
     double* model = new double[nrows * ncols]();
     double* unc = new double[ncols]();
     double* info = new double[5];
+    double* sPf = new double[static_cast<size_t>(ncols) * osample_x]();
+    double* info_ext = new double[6];
+    double info_all[11] = {0};
+    info_all[4] = -11;  // ask slitdec_ox2 for info[5..10]
 
     // Initialize sP with ones (starting guess)
     for (int i = 0; i < ncols; i++) {
@@ -154,6 +171,7 @@ nb::dict slitdec_wrapper(
             // Free already-allocated buffers before throwing
             if (allocated_interp && slitdeltas_interp != nullptr) delete[] slitdeltas_interp;
             delete[] sP; delete[] sL; delete[] model; delete[] unc; delete[] info;
+            delete[] sPf; delete[] info_ext;
             throw std::runtime_error("preset_slitfunc must have length nrows or ny = osample * (nrows + 1) + 1");
         }
     } else {
@@ -190,29 +208,24 @@ nb::dict slitdec_wrapper(
     }
 
     // Call the C function
-    int result = slitdec(
-        ncols,
-        nrows,
+    const std::vector<double>& muy = mu_y.has_value() ? *mu_y : std::vector<double>();
+    int result = slitdec_ox2(
+        ncols, nrows,
         const_cast<double*>(im.data()),
         const_cast<double*>(pix_unc.data()),
-        mask_copy,
-        ycen_copy,
-        slitcurve_padded,
-        slitdeltas_interp,
-        osample,
-        lambda_sP,
-        lambda_sL,
-        maxiter,
-        kappa,
-        use_preset,
-        weight_mode,
+        mask_copy, ycen_copy, slitcurve_padded, slitdeltas_interp,
+        osample, osample_x,
+        mu_x.data(), static_cast<int>(mu_x.size()),
+        muy.data(), static_cast<int>(muy.size()),
+        lambda_sP, lambda_sL, maxiter, kappa,
+        use_preset, weight_mode,
         noise_floor.has_value() ? *noise_floor : -1.0,
-        sP,
-        sL,
-        model,
-        unc,
-        info
+        t_offset,
+        sP, sPf, sL, model, unc, info_all,
+        y_lower_lim.has_value() ? *y_lower_lim : -1
     );
+    std::memcpy(info, info_all, 5 * sizeof(double));
+    std::memcpy(info_ext, info_all + 5, 6 * sizeof(double));
 
     // Clean up interpolated slitdeltas
     if (allocated_interp && slitdeltas_interp != nullptr) {
@@ -233,6 +246,8 @@ nb::dict slitdec_wrapper(
     nb::capsule model_owner(model, [](void *p) noexcept { delete[] (double *) p; });
     nb::capsule unc_owner(unc, [](void *p) noexcept { delete[] (double *) p; });
     nb::capsule info_owner(info, [](void *p) noexcept { delete[] (double *) p; });
+    nb::capsule sPf_owner(sPf, [](void *p) noexcept { delete[] (double *) p; });
+    nb::capsule ext_owner(info_ext, [](void *p) noexcept { delete[] (double *) p; });
     nb::capsule mask_owner(mask_copy, [](void *p) noexcept { delete[] (unsigned char *) p; });
 
     auto sP_array = nb::ndarray<nb::numpy, double>(
@@ -248,13 +263,20 @@ nb::dict slitdec_wrapper(
     auto mask_array = nb::ndarray<nb::numpy, uint8_t>(
         mask_copy, 2, model_shape, mask_owner);
 
+    auto sPf_array = nb::ndarray<nb::numpy, double>(
+        sPf, 1, sPf_shape, sPf_owner);
+    auto ext_array = nb::ndarray<nb::numpy, double>(
+        info_ext, 1, ext_shape, ext_owner);
+
     // Create result dictionary
     nb::dict result_dict;
     result_dict["spectrum"] = sP_array;
     result_dict["slitfunction"] = sL_array;
     result_dict["model"] = model_array;
     result_dict["uncertainty"] = unc_array;
+    result_dict["spectrum_fine"] = sPf_array;
     result_dict["info"] = info_array;
+    result_dict["info_ox"] = ext_array;
     result_dict["mask"] = mask_array;
     result_dict["return_code"] = result;
 
@@ -277,7 +299,12 @@ NB_MODULE(charslit, m) {
           nb::arg("preset_slitfunc") = nb::none(),
           nb::arg("weights") = "none",
           nb::arg("noise_floor") = nb::none(),
-          "Slit decomposition with slit characterization\n\n"
+          nb::arg("osample_x") = 8,
+          nb::arg("mu_x") = std::vector<double>{0.0, 0.0, 1.64e-4},
+          nb::arg("mu_y") = nb::none(),
+          nb::arg("t_offset") = 0.5,
+          nb::arg("y_lower_lim") = nb::none(),
+          "Slit decomposition with the spectrum oversampled along x (slitdec_ox)\n\n"
           "Parameters\n"
           "----------\n"
           "im : ndarray (nrows, ncols)\n"
@@ -298,7 +325,8 @@ NB_MODULE(charslit, m) {
           "osample : int, optional\n"
           "    Subpixel oversampling factor (default: 6)\n"
           "lambda_sP : float, optional\n"
-          "    Smoothing parameter for spectrum (default: 0.0)\n"
+          "    slitdec's unscaled first-difference penalty on the spectrum, applied\n"
+          "    between fine bins (default: 0.0). Prefer mu_x.\n"
           "lambda_sL : float, optional\n"
           "    Smoothing parameter for slit function (default: 1.0)\n"
           "maxiter : int, optional\n"
@@ -327,12 +355,32 @@ NB_MODULE(charslit, m) {
           "noise_floor : float, optional\n"
           "    Variance offset b in the units of im for weights='model': read\n"
           "    noise plus the shot noise of any subtracted background. Default None:\n"
-          "    fitted, but not below the 5th percentile of pix_unc^2.\n\n"
+          "    fitted, but not below the 5th percentile of pix_unc^2.\n"
+          "osample_x : int, optional\n"
+          "    Fine spectrum bins per detector column (default: 8). Set by the\n"
+          "    narrowest line: rms line error ~0.025 (1/(osample_x*sigma))^2.\n"
+          "mu_x : sequence of float, optional\n"
+          "    Spectrum penalties on the 1st, 2nd, ... derivative in physical units:\n"
+          "    transfer 1/(1 + sum mu_k nu^2k), nu in rad/px, independent of\n"
+          "    osample, osample_x, flux and weights. Default (0, 0, 1.64e-4)\n"
+          "    whitens the extraction noise for any tilt. Empty: no penalty.\n"
+          "mu_y : sequence of float, optional\n"
+          "    Slit-function penalties, same units. None (default): lambda_sL.\n"
+          "    mu_y=(1e-2,) is the recommended start (docs/slitdec_ox.md).\n"
+          "t_offset : float, optional\n"
+          "    Where along a y-subpixel the curvature is evaluated: 0.5 (default)\n"
+          "    the centre, 0 the lower edge as in slitdec.c, which shifts lines\n"
+          "    by c1/(2*osample).\n"
+          "y_lower_lim : int, optional\n"
+          "    Rows below the trace row in the swath (default None: nrows // 2).\n\n"
+          "osample_x=1, mu_x=[], t_offset=0 reproduces slitdec.c bit for bit.\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"
           "    spectrum : ndarray (ncols,)\n"
-          "        Extracted spectrum\n"
+          "        Extracted spectrum on the detector grid (mean of the fine bins)\n"
+          "    spectrum_fine : ndarray (ncols * osample_x,)\n"
+          "        Spectrum on the fine grid\n"
           "    slitfunction : ndarray (ny,)\n"
           "        Slit illumination function\n"
           "    model : ndarray (nrows, ncols)\n"
@@ -342,7 +390,11 @@ NB_MODULE(charslit, m) {
           "    info : ndarray (5,)\n"
           "        Status information [success, cost, status, iter, delta_x].\n"
           "        status: 1 converged, -1 out of iterations,\n"
-          "        -2 curvature too large, -3 non-finite result\n"
+          "        -2 curvature too large, -3 non-finite result, -4 out of memory\n"
+          "    info_ox : ndarray (6,)\n"
+          "        [dropped zeta entries, sP band half-width, damping ratio x,\n"
+          "        nominal resolution x [px], damping ratio y, resolution y [px]].\n"
+          "        Legacy lambda_sL: damping y = -(equivalent mu1_y).\n"
           "    mask : ndarray (nrows, ncols), uint8\n"
           "        Updated pixel mask after outlier rejection\n"
           "    return_code : int\n"

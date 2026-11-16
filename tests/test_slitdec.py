@@ -81,6 +81,8 @@ class TestOutputStructure:
             "info",
             "mask",
             "return_code",
+            "spectrum_fine",
+            "info_ox",
         }
         assert set(result.keys()) == expected_keys
         save_test_data(data["im"], result["model"])
@@ -383,15 +385,20 @@ class TestNumericalBehavior:
         slitcurve = np.zeros((ncols, 3))
         if curved:  # any nonzero coefficient leaves the flat fast path
             slitcurve[:, 1] = 1e-12
-        for k in range(osample):
-            ycen = np.full(ncols, 9 + k / osample + 1e-12)
-            ycen[x0] = 9 + k / osample
-            result = charslit.slitdec(
+        # Compared with the same column in an all-epsilon run, not with the median:
+        # the mu_x penalty spreads the swath-edge transient over several columns.
+        def run(ycen):
+            return charslit.slitdec(
                 im, pix_unc, np.ones(im.shape, dtype=np.uint8), ycen,
                 slitcurve, np.zeros(nrows), osample=osample, kappa=0.0,
-            )
-            sp = result["spectrum"]
-            assert abs(sp[x0] / np.median(sp) - 1) < 1e-9, f"k={k}"
+            )["spectrum"]
+
+        for k in range(osample):
+            ycen = np.full(ncols, 9 + k / osample + 1e-12)
+            ref = run(ycen)
+            ycen[x0] = 9 + k / osample
+            sp = run(ycen)
+            assert abs(sp[x0] / ref[x0] - 1) < 1e-9, f"k={k}"
 
 
 class TestEdgeCases:
@@ -708,6 +715,7 @@ class TestPresetSlitfunction:
     def test_recovers_spectrum_from_clean_model(self, simple_image_data):
         """Given a clean model image and its true slit function, preset mode
         recovers the generating spectrum to high precision.
+        Without a spectrum penalty: with one, the re-solve smooths a second time.
 
         The image is the C code's own forward model from a normal run, so it is
         exactly representable; with the matching slit function as a preset the
@@ -717,7 +725,7 @@ class TestPresetSlitfunction:
         normal = charslit.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
-            kappa=0,
+            kappa=0, osample_x=1, mu_x=[],
         )
         assert normal["return_code"] == 0
 
@@ -727,7 +735,7 @@ class TestPresetSlitfunction:
             np.ones_like(clean_im),
             np.ones(clean_im.shape, dtype=np.uint8),
             data["ycen"], data["slitcurve"], data["slitdeltas"],
-            osample=data["osample"], kappa=0,
+            osample=data["osample"], kappa=0, osample_x=1, mu_x=[],
             preset_slitfunc=normal["slitfunction"].copy(),
         )
         assert result["return_code"] == 0

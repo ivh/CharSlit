@@ -1,7 +1,9 @@
 /* slitdec_ox: slitdec with the spectrum oversampled along x as well as the slit
    function along y.
 
-   Derived from CharSlit slitdec.c (commit c878d00, as vendored in PyReduce).
+   Derived from CharSlit slitdec.c (commit c878d00, as vendored in PyReduce), by
+   N. Piskunov (github.com/nikolai-piskunov/slitdec_ox); weights='model' brought
+   up to CharSlit 5e38be4 (variance fit a * model + b).
    Differences from slitdec():
    - The spectrum is solved on a fine grid of osample_x bins per detector column
      (sP_fine, ncols * osample_x values, a piecewise-constant density in the same
@@ -484,14 +486,12 @@ static void normalise_weights(double *w, long n)
             w[i] *= nw / wsum;
 }
 
-int slitdec_ox_force_general = 0;
-/* Where along a y-subpixel the curvature is evaluated, in units of the
+/* t_offset: where along a y-subpixel the curvature is evaluated, in units of the
    subpixel height. slitdec.c uses t = (subpixel lower edge) - ycen, i.e. half
    a subpixel below the subpixel centre; with a tilt c1 this shifts every line
    by c1 / (2 * osample) pixels (measured: 3.7 mpx for c1 = 8/136, osample 8,
    scaling exactly with 1/osample). 0.5 evaluates it at the subpixel centre and
    removes the shift; 0.0 reproduces slitdec.c bit for bit. */
-double slitdec_ox_t_offset = 0.5; /* testing: use the fine-bin path at osample_x = 1 */
 
 static inline void zeta_add(zeta_ref_ox *zeta, int *m_zeta, zeta_rng_ox *z_rng,
                             int ncols, int nrows, int mzz, int *ndrop,
@@ -532,7 +532,7 @@ static inline void zeta_add(zeta_ref_ox *zeta, int *m_zeta, zeta_rng_ox *z_rng,
 static int zeta_tensors_ox(
     int ncols, int nrows, int ny, double *ycen, int *ycen_offset,
     int y_lower_lim, int osample, int osample_x,
-    double *slitcurve, double *slitdeltas,
+    double *slitcurve, double *slitdeltas, double t_offset,
     zeta_ref_ox *zeta, int *m_zeta, zeta_rng_ox *z_rng, int mzz, int *ndrop)
 {
     int x, xx, y, yy, iy, iy1, iy2, p, r;
@@ -586,14 +586,14 @@ static int zeta_tensors_ox(
                 else
                     w = step;
                 dy += step;
-                double t = dy - ycen[x] + slitdec_ox_t_offset * step;
+                double t = dy - ycen[x] + t_offset * step;
                 delta = t * (slitcurve[curve_index(x, 1)] +
                         t * (slitcurve[curve_index(x, 2)] +
                         t * (slitcurve[curve_index(x, 3)] +
                         t * (slitcurve[curve_index(x, 4)] +
                         t *  slitcurve[curve_index(x, 5)]))))
                         + slitdeltas[iy];
-                if (osample_x == 1 && !slitdec_ox_force_general)
+                if (osample_x == 1)
                 {
                     /* historic two-column split, kept verbatim for exact regression */
                     const int ix1 = delta;
@@ -694,6 +694,88 @@ static int cmp_double(const void *p, const void *q)
     return (a > b) - (a < b);
 }
 
+static int cmp_pair(const void *p, const void *q)
+{
+    const double *a = p, *b = q;
+    if (a[0] != b[0])
+        return (a[0] > b[0]) - (a[0] < b[0]);
+    return (a[1] > b[1]) - (a[1] < b[1]);
+}
+
+/* Fit pix_unc^2 = a * model + b over the usable pixels, a >= 0, b >= b_min (b = b_min if
+   fix_b). The model is the background-subtracted object, so the variance is affine in it:
+   b carries read noise and the shot noise of any subtracted background (nodding A-B),
+   a = 1/(gain * frames combined). The line goes through the medians of model and
+   pix_unc^2 in bins of equal pixel count along the model, as unmasked hot pixels with huge
+   pix_unc dominate a plain least-squares fit. Ties sort by pix_unc^2 so that the bins are
+   reproducible in the numpy and numba ports. */
+static void variance_fit(const double *model, const double *pix_unc, const unsigned char *mask,
+                         long npix, double b_min, int fix_b, double *a, double *b)
+{
+    const long nbin_max = 32, nbin_min_pix = 32;
+    double sm = 0.e0, sv = 0.e0, smm = 0.e0, smv = 0.e0;
+    long nk = 0, nbin;
+    double *pv = malloc((size_t)(2 * npix) * sizeof(double));
+
+    *a = 0.e0;
+    *b = b_min;
+    for (long i = 0; i < npix; i++)
+    {
+        const double u = pix_unc[i];
+        if (!mask[i] || !isfinite(u) || !(u > 0.e0) || !isfinite(model[i]))
+            continue;
+        pv[2 * nk] = model[i];
+        pv[2 * nk + 1] = u * u;
+        nk++;
+    }
+    nbin = nk / nbin_min_pix;
+    if (nbin > nbin_max)
+        nbin = nbin_max;
+    if (nbin < 2)
+    {
+        free(pv);
+        return;
+    }
+    qsort(pv, (size_t)nk, 2 * sizeof(double), cmp_pair);
+
+    double *tmp = malloc((size_t)(nk / nbin + 1) * sizeof(double));
+    for (long k = 0; k < nbin; k++)
+    {
+        const long i0 = k * nk / nbin, i1 = (k + 1) * nk / nbin, nb = i1 - i0;
+        const double bm = 0.5 * (pv[2 * (i0 + (nb - 1) / 2)] + pv[2 * (i0 + nb / 2)]);
+        for (long i = i0; i < i1; i++)
+            tmp[i - i0] = pv[2 * i + 1];
+        qsort(tmp, (size_t)nb, sizeof(double), cmp_double);
+        const double bv = 0.5 * (tmp[(nb - 1) / 2] + tmp[nb / 2]);
+        sm += bm;
+        sv += bv;
+        smm += bm * bm;
+        smv += bm * bv;
+    }
+    free(tmp);
+    free(pv);
+
+    if (!fix_b)
+    {
+        const double det = nbin * smm - sm * sm;
+        if (det > 0.e0)
+        {
+            *a = (nbin * smv - sm * sv) / det;
+            *b = (sv - *a * sm) / nbin;
+        }
+        if (*a < 0.e0)
+        {
+            *a = 0.e0;
+            *b = sv / nbin;
+        }
+        if (*b >= b_min)
+            return;
+        *b = b_min;
+    }
+    if (smm > 0.e0)
+        *a = fmax((smv - *b * sm) / smm, 0.e0);
+}
+
 /* Median of the positive entries v[0], v[stride], ... v[(n-1)*stride] (0 if none) */
 static double median_positive(const double *v, int n, int stride)
 {
@@ -762,12 +844,14 @@ int slitdec_ox2(    int ncols,
                     int nk_x,
                     const double *mu_y,
                     int nk_y,
+                    double lambda_sP,
                     double lambda_sL,
                     int maxiter,
                     double kappa,
                     int use_preset,
                     int weight_mode,
                     double noise_floor,
+                    double t_offset,
                     double *sP,
                     double *sP_fine,
                     double *sL,
@@ -794,6 +878,9 @@ int slitdec_ox2(    int ncols,
                    the penalty transfer 1/(1 + sum mu_k nu^2k) drops to 1/2. For
                    the legacy lambda_sL, info[9..10] use the equivalent mu1_y
                    (returned in info[9] as -mu1_y, since its damping is infinite).
+       lambda_sP : slitdec's unscaled penalty on first differences, applied
+                   between adjacent fine bins (0: off; prefer mu_x)
+       t_offset  : see zeta_tensors_ox
        y_lower_lim : rows below the central row of the swath, i.e. the
                    trace sits at row y_lower_lim + ycen[x] - (int)ycen[x]
                    (IDL REDUCE convention). < 0 means nrows / 2 (slitdec). */
@@ -848,7 +935,7 @@ int slitdec_ox2(    int ncols,
     if (ky > 2 * osample) /* the sL band holds differences up to 2 * osample */
         ky = 2 * osample;
 
-    delta_x = kx == 0 ? 0 : 1;
+    delta_x = (kx == 0 && lambda_sP == 0) ? 0 : 1;
     for (x = 0; x < ncols; x++)
     {
         if (slitcurve[curve_index(x, 1)] == 0.e0 && slitcurve[curve_index(x, 2)] == 0.e0 &&
@@ -923,7 +1010,7 @@ int slitdec_ox2(    int ncols,
                 yc[x] = ycen[x] - yo[x];
             }
             zeta_tensors_ox(ncols, nrows, ny, yc, yo, y_lower_lim, osample, ox,
-                            slitcurve, slitdeltas, NULL, m_zeta, z_rng, INT_MAX, &ndrop);
+                            slitcurve, slitdeltas, t_offset, NULL, m_zeta, z_rng, INT_MAX, &ndrop);
             for (long i = 0; i < (long)ncols * nrows; i++)
                 if (m_zeta[i] > mzz)
                     mzz = m_zeta[i];
@@ -958,6 +1045,7 @@ int slitdec_ox2(    int ncols,
         sPf[j] = sP[j / ox];
 
     double *wbuf = NULL, *wpix = NULL;
+    int fit_b = 0;
     const long npix = (long)nrows * ncols;
     if (weight_mode == 1)
     {
@@ -975,7 +1063,8 @@ int slitdec_ox2(    int ncols,
     else if (weight_mode == 2)
     {
         wbuf = malloc((size_t)npix * sizeof(double));
-        if (!(noise_floor >= 0.e0))
+        fit_b = !(noise_floor >= 0.e0);
+        if (fit_b)
         {
             long nn = 0;
             for (long i = 0; i < npix; i++)
@@ -992,7 +1081,7 @@ int slitdec_ox2(    int ncols,
         flat_setup(ncols, osample, ycen, k0col, d1col);
     else
         zeta_tensors_ox(ncols, nrows, ny, ycen, ycen_offset, y_lower_lim, osample, ox,
-                        slitcurve, slitdeltas, zeta, m_zeta, z_rng, mzz, &ndrop);
+                        slitcurve, slitdeltas, t_offset, zeta, m_zeta, z_rng, mzz, &ndrop);
 
     /* sP band: widest fine-bin span of one pixel, at least the penalty order */
     {
@@ -1008,7 +1097,7 @@ int slitdec_ox2(    int ncols,
                         span = zr->max_x - zr->min_x;
                 }
         bx = (kx > 0 && span < kx) ? kx : span;
-        if (ox > 1 && bx < 1)
+        if ((ox > 1 || lambda_sP > 0.e0) && bx < 1)
             bx = 1;
         nx = 2 * bx + 1;
         int zbuf = max(max(mzz, 2 * osample + 1), span + 1);
@@ -1214,6 +1303,21 @@ int slitdec_ox2(    int ncols,
             for (j = 0; j < nf - m; j++)
                 p_Aij[paij_index(j + m, bx - m)] = p_Aij[paij_index(j, bx + m)];
 
+        if (lambda_sP > 0.e0)
+        {
+            lambda = lambda_sP;
+            p_Aij[paij_index(0, bx)] += lambda;
+            p_Aij[paij_index(0, bx + 1)] -= lambda;
+            for (j = 1; j < nf - 1; j++)
+            {
+                p_Aij[paij_index(j, bx - 1)] -= lambda;
+                p_Aij[paij_index(j, bx)] += lambda * 2.e0;
+                p_Aij[paij_index(j, bx + 1)] -= lambda;
+            }
+            p_Aij[paij_index(nf - 1, bx - 1)] -= lambda;
+            p_Aij[paij_index(nf - 1, bx)] += lambda;
+        }
+
         /* Penalty mu_x * F * int (d^k sP/dx^k)^2 dx. With fine bins of width
            h = 1/ox the data curvature of one bin is F h^2, so F = median
            diagonal * ox^2, and the discrete form of the integral is
@@ -1280,8 +1384,13 @@ int slitdec_ox2(    int ncols,
 
         if (weight_mode == 2)
         {
+            double va, vb;
+            variance_fit(model, pix_unc, mask, npix, noise_floor, !fit_b, &va, &vb);
             for (long i = 0; i < npix; i++)
-                wbuf[i] = mask[i] ? 1.e0 / (fmax(model[i], 0.e0) + noise_floor) : 0.e0;
+            {
+                const double v = va * fmax(model[i], 0.e0) + vb;
+                wbuf[i] = mask[i] && v > 0.e0 ? 1.e0 / v : 0.e0;
+            }
             normalise_weights(wbuf, npix);
             wpix = wbuf;
         }
@@ -1472,24 +1581,4 @@ int slitdec_ox2(    int ncols,
         }
     }
     return 0;
-}
-
-/* slitdec-compatible entry point: the trace is at row nrows / 2 of the swath,
-   the spectrum penalty is mu_x on the sp_order-th derivative only and the slit
-   function penalty is slitdec's lambda_sL. */
-int slitdec_ox(int ncols, int nrows, double *im, double *pix_unc, unsigned char *mask,
-               double *ycen, double *slitcurve, double *slitdeltas, int osample,
-               int osample_x, double mu_x, int sp_order, double lambda_sL, int maxiter,
-               double kappa, int use_preset, int weight_mode, double noise_floor,
-               double *sP, double *sP_fine, double *sL, double *model, double *unc,
-               double *info)
-{
-    double mu[SLITDEC_OX_KMAX] = {0};
-    if (sp_order < 1) sp_order = 1;
-    if (sp_order > SLITDEC_OX_KMAX) sp_order = SLITDEC_OX_KMAX;
-    mu[sp_order - 1] = mu_x;
-    return slitdec_ox2(ncols, nrows, im, pix_unc, mask, ycen, slitcurve, slitdeltas,
-                       osample, osample_x, mu, sp_order, NULL, 0, lambda_sL, maxiter, kappa,
-                       use_preset, weight_mode, noise_floor, sP, sP_fine, sL, model,
-                       unc, info, nrows / 2);
 }

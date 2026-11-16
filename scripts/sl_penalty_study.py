@@ -24,8 +24,10 @@ Metrics on sL, all relative to the plateau / peak and free of grid alignment:
 import sys
 import numpy as np
 from scipy.special import erf
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from synth import make_swath
-import pyslitdec_ox as P
+import charslit
 
 NR, NC, OS = 40, 200, 10
 
@@ -70,9 +72,10 @@ def metrics(sL, prof, os_):
 
 
 def run(img, ycen, sc, mu_y=None, lam=None, os_=OS):
-    kw = dict(ycen=ycen, slitcurve=sc, osample=os_, osample_x=1, mu_x=0.0, kappa=0, maxiter=30)
-    r = P.slitdec_ox(img, mu_y=mu_y, lambda_sL=lam if lam is not None else 1.0, **kw)
-    return r["slitfunction"], r["info"]
+    r = charslit.slitdec(img, np.ones_like(img), np.ones(img.shape, np.uint8), ycen, sc,
+                         np.zeros(img.shape[0]), osample=os_, osample_x=1, mu_x=[], kappa=0,
+                         maxiter=30, mu_y=mu_y, lambda_sL=lam if lam is not None else 1.0)
+    return r["slitfunction"], np.concatenate([r["info"], r["info_ox"]])
 
 
 if __name__ == "__main__":

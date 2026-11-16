@@ -1,4 +1,7 @@
-"""Benchmark slitdec on the real data files. Usage: uv run python scripts/bench.py [nrepeat]
+"""Benchmark slitdec on the real data files. Usage: uv run python scripts/bench.py [nrepeat] [osample_x] [maxpix]
+
+osample_x (default 1) = 1 runs the slitdec.c-compatible settings (mu_x=[], t_offset=0);
+> 1 the slitdec_ox defaults at that oversampling. maxpix skips larger frames.
 
 This times ONLY the charslit.slitdec C call (each case is loaded once, then the
 call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
@@ -45,6 +48,9 @@ from astropy.io import fits
 import charslit
 
 NREPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+OSAMPLE_X = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+MAXPIX = int(float(sys.argv[3])) if len(sys.argv) > 3 else None
+OX_KW = dict(osample_x=1, mu_x=[], t_offset=0.0) if OSAMPLE_X == 1 else dict(osample_x=OSAMPLE_X)
 
 
 def load_case(fits_path):
@@ -100,7 +106,7 @@ if __name__ == "__main__":
     total = 0.0
     for f in sorted(Path("data").glob("*.fits")):
         case = load_case(f)
-        if case is None:
+        if case is None or (MAXPIX and case["im"].size > MAXPIX):
             continue
         times = []
         for _ in range(NREPEAT):
@@ -109,6 +115,7 @@ if __name__ == "__main__":
                 case["im"], case["pix_unc"], case["mask"], case["ycen"],
                 case["slitcurve"], case["slitdeltas"],
                 osample=6, lambda_sP=case["lambda_sP"], lambda_sL=case["lambda_sL"],
+                **OX_KW,
             )
             times.append(time.perf_counter() - t0)
         best = min(times)
