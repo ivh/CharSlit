@@ -8,6 +8,7 @@ import charslit
 
 
 def slitdec_ox(im, pix_unc, ycen, slitcurve, **kw):
+    kw.setdefault("t_offset", 0.5)
     return charslit.slitdec(im, pix_unc, np.ones(im.shape, np.uint8), ycen, slitcurve,
                             np.zeros(im.shape[0]), **kw)
 

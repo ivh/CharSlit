@@ -1,30 +1,44 @@
 # slitdec_ox: slitdec with oversampling in x and y
 
-On this branch `charslit.slitdec` runs `slitdec/slitdec_ox.c` instead of `slitdec.c`.
-The C code is N. Piskunov's (https://github.com/nikolai-piskunov/slitdec_ox, GPL-3.0,
-see `slitdec/LICENSE.slitdec_ox`; its history is merged into this branch), with the
-IDL REDUCE interface and the ctypes wrapper removed, `lambda_sP` and `t_offset` made
-arguments, and `weights='model'` brought up to master (5e38be4, a·model + b).
+`slitdec/slitdec.c` is N. Piskunov's slitdec_ox (https://github.com/nikolai-piskunov/slitdec_ox,
+GPL-3.0 like the rest of CharSlit; its history is merged in), which he derived from our
+`slitdec.c` (c878d00). It came back in November 2026 as the one engine, under the old file
+and function names: the IDL REDUCE interface and the ctypes wrapper were removed,
+`lambda_sP` and `t_offset` made arguments, `weights='model'` brought up to 5e38be4
+(a·model + b), and `out_x` and the propagated uncertainties added. The C function
+`slitdec()` keeps its 21 historic arguments in the old order; the new ones follow.
 
-`slitdec_ox.c` is CharSlit `slitdec.c` (c878d00, as vendored in PyReduce) with the
-spectrum solved on `osample_x` fine bins per column. Each y-subpixel of the slit
-function, shifted by the curvature, contributes to a detector pixel by the overlap
-of each shifted fine bin with that pixel (box integration). The spectrum penalty is a
-k-th difference in physical units, `mu_x * F * ∫ (d^k sP/dx^k)^2 dx`, with F the median
-data curvature per pixel, so `mu_x` does not depend on `osample_x`, flux or weights.
-`sP` comes back on the detector grid (mean of the fine bins = what a vertical slit
-records); `sP_fine` optionally returns the fine solution.
+**The defaults are the historic slitdec**: `osample_x=1`, no `mu_x`, `t_offset=0`. A plain
+call is bit-identical to the code before, and everything below is opt-in.
 
-Python: `charslit.slitdec(im, pix_unc, mask, ycen, slitcurve, slitdeltas, ...)` as on
-master, plus `osample_x=8`, `mu_x=(0, 0, 1.64e-4)` (penalties on the 1st, 2nd, ...
-derivative of the spectrum), `mu_y=None` (slit function; None = `lambda_sL`),
-`t_offset=0.5` and `y_lower_lim=None` (trace row in the swath; None = nrows // 2).
-Extra outputs: `spectrum_fine` (ncols·osample_x) and `info_ox` = [dropped zeta entries,
-sP band half-width, damping x, resolution x [px], damping y, resolution y [px]].
-`lambda_sP` is master's unscaled first-difference penalty, applied between fine bins.
-`out_x=n` (n divides `osample_x`) adds `spectrum_out`, the spectrum on n bins per column
-(mean of adjacent fine bins, nested in the detector pixels). `uncertainty=` selects the
-error estimate, see below.
+With `osample_x > 1` the spectrum is solved on that many fine bins per column. Each
+y-subpixel of the slit function, shifted by the curvature, contributes to a detector pixel
+by the overlap of each shifted fine bin with that pixel (box integration). The spectrum
+penalty is a k-th difference in physical units, `mu_x * F * ∫ (d^k sP/dx^k)^2 dx`, with F
+the median data curvature per pixel, so `mu_x` does not depend on `osample_x`, flux or
+weights. `spectrum` stays on the detector grid (mean of the fine bins = what a vertical
+slit records); `spectrum_fine` is the fine solution.
+
+Recommended when the slit is tilted or lines are under-sampled:
+`charslit.slitdec(..., osample_x=8, t_offset=0.5)`.
+
+New arguments of `charslit.slitdec`:
+- `osample_x=1`: fine bins per column.
+- `mu_x=None`: penalties on the 1st, 2nd, ... derivative of the spectrum. None means no
+  penalty at `osample_x=1` and `(0, 0, 1.64e-4)` otherwise.
+- `mu_y=None`: the same for the slit function; None = `lambda_sL`.
+- `t_offset=0`: where along a y-subpixel the tilt is evaluated; 0.5 (the centre) is correct,
+  0 is the historic behaviour (see "Finding" below). Not the default, so that nothing
+  changes silently; science and calibration must use the same value.
+- `y_lower_lim=None`: trace row in the swath; None = nrows // 2.
+- `out_x=None`: n (dividing `osample_x`) adds `spectrum_out`, the spectrum on n bins per
+  column (mean of adjacent fine bins, nested in the detector pixels).
+- `uncertainty='residual'`, `nlag=2`: see "Uncertainties".
+
+`lambda_sP` is the historic unscaled first-difference penalty, applied between fine bins.
+Extra results: `spectrum_fine` (ncols·osample_x) and `info_ox` = [dropped zeta entries, sP
+band half-width, damping x, resolution x [px], damping y, resolution y [px]]; with `out_x`
+`spectrum_out`; with `uncertainty` other than `'residual'` `covariance` and `chi2`.
 
 Measurements behind the recommendations here, and the results of November 2026:
 [ox_experiments.md](ox_experiments.md).
@@ -45,7 +59,8 @@ Measurements behind the recommendations here, and the results of November 2026:
   then as for the linear split (1.7× in variance on a tilted slit). k = 3 is enough.
 - **Never `mu_x=[]` with `osample_x > 1`**: patterns that repeat every pixel with zero mean
   are exact null modes, the solve does not converge.
-- **`osample_x = 8` for everything**; smaller values are not better for anything measured.
+- **`osample_x = 8` whenever it is more than 1**; smaller values are not better for anything
+  measured. `mu_x=None` then gives the whitening penalty.
 - **`out_x`**: 2 is enough for FWHM ≈ 1.8 px, lines narrower than a pixel need 4. The saved
   values are bin averages.
 - **osample (y)**: no new requirement; the shift change over one subpixel, c1/osample,
@@ -96,10 +111,10 @@ rejection re-enables enter with their pix_unc, see [../mask_nan.md](../mask_nan.
 
 ## Regression and tests
 
-`osample_x=1, mu_x=[], t_offset=0` reproduces master's slitdec.c: `tests/test_regression.py`
-runs the golden suite with these settings (rtol 1e-10, exact mask), and a one-off comparison
-against master's C was bit-identical for all four weight modes. `tests/test_slitdec.py` runs
-at the ox defaults. `tests/test_ox.py` covers what is new: tilt reference point, line bias,
+`tests/test_regression.py` and `tests/test_slitdec.py` are the files of the old engine (one
+line added for the new result keys): the golden suite passes at the defaults (rtol 1e-10,
+exact mask), and a one-off comparison against the old C was bit-identical for all four
+weight modes. `tests/test_ox.py` covers what is new: tilt reference point, line bias,
 `spectrum` = mean of `spectrum_fine`, sampling recovery, `out_x`, propagated uncertainties.
 
 Swath edges: the transient at the ends reaches a few columns beyond `delta_x`
@@ -129,7 +144,7 @@ ox_experiments.md, sections 4-8.
 
 ## Penalties: mu_k in x and y (penalty_design.py, sl_penalty_study.py)
 
-`slitdec_ox2` (`mu_x`, `mu_y` in Python) takes `mu_x[k-1]`, `mu_y[k-1]` (k = 1..15): penalty
+`slitdec()` (`mu_x`, `mu_y` in Python) takes `mu_x[k-1]`, `mu_y[k-1]` (k = 1..15): penalty
 sum_k mu_k F ∫ (d^k s)^2 in physical units, i.e. the filter 1/(1 + sum_k mu_k nu^2k),
 nu in rad/px, independent of osample, osample_x, flux, weights (F = median diagonal
 x os^2; coefficient on k-th differences mu_k · diag_med · os^(2k+1)). No mu_y: the
@@ -163,8 +178,8 @@ objective next step.
 
 ## Not done
 
-- Real frames: only the golden-suite FITS files at compatibility settings; no assessment of the
-  ox defaults on real data yet.
+- Real frames: only the golden-suite FITS files at the default (historic) settings; no
+  assessment of `osample_x=8` on real data yet.
 - Memory: the zeta list holds ≈ (osample+1)(osample_x+1) entries per pixel
   (≈ 90 MB for a 500 × 136 swath at 8/8; the list length is now counted exactly).
 - Speed: no flat fast path for osample_x > 1; 5× (ox 8) to 10× (ox 16) slower than

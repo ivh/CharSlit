@@ -11,7 +11,7 @@ Found while validating `uncertainty='propagated'` on the CRIRES test frames. Not
 2. With `kappa > 0` the C code rewrites the whole mask every iteration,
    `mask = |model - im| < kappa * dev` for the columns inside `delta_x`, ignoring the
    input mask. Same on master (`slitdec/slitdec.c`, the kappa block) and on `slitdec_ox`
-   (`slitdec/slitdec_ox.c`).
+   (`slitdec/slitdec.c`, the kappa block near the end of the iteration loop).
 3. A zero-filled pixel passes that test wherever the model is faint, comes back as good and
    is fitted as a measurement of zero flux.
 

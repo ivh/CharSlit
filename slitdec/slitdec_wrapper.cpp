@@ -9,7 +9,7 @@
 #include <vector>
 
 extern "C" {
-#include "slitdec_ox.h"
+#include "slitdec.h"
 }
 
 namespace nb = nanobind;
@@ -30,7 +30,7 @@ nb::dict slitdec_wrapper(
     std::string weights,
     std::optional<double> noise_floor,
     int osample_x,
-    std::vector<double> mu_x,
+    std::optional<std::vector<double>> mu_x_in,
     std::optional<std::vector<double>> mu_y,
     double t_offset,
     std::optional<int> y_lower_lim,
@@ -53,6 +53,10 @@ nb::dict slitdec_wrapper(
         throw std::runtime_error("out_x must be >= 1 and divide osample_x");
     if (osample_x < 1)
         throw std::runtime_error("osample_x must be >= 1");
+    // Without a penalty the fine bins are not determined (exact null modes), so
+    // osample_x > 1 gets the noise-whitening penalty unless mu_x is given
+    const std::vector<double> mu_x = mu_x_in.has_value() ? *mu_x_in
+        : (osample_x > 1 ? std::vector<double>{0.0, 0.0, 1.64e-4} : std::vector<double>());
     if (mu_x.size() > SLITDEC_OX_KMAX || (mu_y.has_value() && mu_y->size() > SLITDEC_OX_KMAX))
         throw std::runtime_error("mu_x and mu_y take at most 15 derivative orders");
     int weight_mode;
@@ -152,7 +156,7 @@ nb::dict slitdec_wrapper(
     double* sPf = new double[static_cast<size_t>(ncols) * osample_x]();
     double* info_ext = new double[6];
     double info_all[11] = {0};
-    info_all[4] = -11;  // ask slitdec_ox2 for info[5..10]
+    info_all[4] = -11;  // ask slitdec for info[5..10]
 
     // Initialize sP with ones (starting guess)
     for (int i = 0; i < ncols; i++) {
@@ -229,20 +233,21 @@ nb::dict slitdec_wrapper(
     double* cov = unc_mode > 0 ? new double[ncov * (nlag + 1)]() : nullptr;
     double chi2 = 0.0;
     const std::vector<double>& muy = mu_y.has_value() ? *mu_y : std::vector<double>();
-    int result = slitdec_ox2(
+    int result = slitdec(
         ncols, nrows,
         const_cast<double*>(im.data()),
         const_cast<double*>(pix_unc.data()),
         mask_copy, ycen_copy, slitcurve_padded, slitdeltas_interp,
-        osample, osample_x,
-        mu_x.data(), static_cast<int>(mu_x.size()),
-        muy.data(), static_cast<int>(muy.size()),
-        lambda_sP, lambda_sL, maxiter, kappa,
+        osample, lambda_sP, lambda_sL, maxiter, kappa,
         use_preset, weight_mode,
         noise_floor.has_value() ? *noise_floor : -1.0,
+        sP, sL, model, unc, info_all,
+        osample_x,
+        mu_x.data(), static_cast<int>(mu_x.size()),
+        muy.data(), static_cast<int>(muy.size()),
         t_offset,
-        sP, sPf, sL, model, unc, info_all,
         y_lower_lim.has_value() ? *y_lower_lim : -1,
+        sPf,
         unc_mode, cov_x, nlag, cov, &chi2
     );
     std::memcpy(info, info_all, 5 * sizeof(double));
@@ -340,15 +345,15 @@ NB_MODULE(charslit, m) {
           nb::arg("preset_slitfunc") = nb::none(),
           nb::arg("weights") = "none",
           nb::arg("noise_floor") = nb::none(),
-          nb::arg("osample_x") = 8,
-          nb::arg("mu_x") = std::vector<double>{0.0, 0.0, 1.64e-4},
+          nb::arg("osample_x") = 1,
+          nb::arg("mu_x") = nb::none(),
           nb::arg("mu_y") = nb::none(),
-          nb::arg("t_offset") = 0.5,
+          nb::arg("t_offset") = 0.0,
           nb::arg("y_lower_lim") = nb::none(),
           nb::arg("out_x") = nb::none(),
           nb::arg("uncertainty") = "residual",
           nb::arg("nlag") = 2,
-          "Slit decomposition with the spectrum oversampled along x (slitdec_ox)\n\n"
+          "Slit decomposition, optionally with the spectrum oversampled along x\n\n"
           "Parameters\n"
           "----------\n"
           "im : ndarray (nrows, ncols)\n"
@@ -401,20 +406,26 @@ NB_MODULE(charslit, m) {
           "    noise plus the shot noise of any subtracted background. Default None:\n"
           "    fitted, but not below the 5th percentile of pix_unc^2.\n"
           "osample_x : int, optional\n"
-          "    Fine spectrum bins per detector column (default: 8). Set by the\n"
-          "    narrowest line: rms line error ~0.025 (1/(osample_x*sigma))^2.\n"
+          "    Fine spectrum bins per detector column. Default 1: one bin per\n"
+          "    column with the linear two-column split, the historic slitdec.\n"
+          "    8 is the recommended value otherwise (docs/slitdec_ox.md): it removes\n"
+          "    the line-shape error and, with the default mu_x, the excess noise\n"
+          "    of the linear split on a tilted slit. Use t_offset=0.5 with it.\n"
           "mu_x : sequence of float, optional\n"
           "    Spectrum penalties on the 1st, 2nd, ... derivative in physical units:\n"
           "    transfer 1/(1 + sum mu_k nu^2k), nu in rad/px, independent of\n"
-          "    osample, osample_x, flux and weights. Default (0, 0, 1.64e-4)\n"
-          "    whitens the extraction noise for any tilt. Empty: no penalty.\n"
+          "    osample, osample_x, flux and weights. Default None: no penalty for\n"
+          "    osample_x = 1, (0, 0, 1.64e-4) otherwise, which whitens the extraction\n"
+          "    noise for any tilt. (0, 0, 1e-6) keeps sub-pixel line shape at the\n"
+          "    price of that noise. Never empty with osample_x > 1: the fine bins\n"
+          "    are then not determined.\n"
           "mu_y : sequence of float, optional\n"
           "    Slit-function penalties, same units. None (default): lambda_sL.\n"
           "    mu_y=(1e-2,) is the recommended start (docs/slitdec_ox.md).\n"
           "t_offset : float, optional\n"
-          "    Where along a y-subpixel the curvature is evaluated: 0.5 (default)\n"
-          "    the centre, 0 the lower edge as in slitdec.c, which shifts lines\n"
-          "    by c1/(2*osample).\n"
+          "    Where along a y-subpixel the curvature is evaluated: 0 (default,\n"
+          "    historic) the lower edge, which shifts every line by c1/(2*osample);\n"
+          "    0.5 the centre, which is correct.\n"
           "y_lower_lim : int, optional\n"
           "    Rows below the trace row in the swath (default None: nrows // 2).\n"
           "out_x : int, optional\n"
@@ -431,7 +442,7 @@ NB_MODULE(charslit, m) {
           "    chi^2 of the residuals, for pix_unc of unknown scale.\n"
           "nlag : int, optional\n"
           "    Number of lags in the returned covariance (default 2).\n\n"
-          "osample_x=1, mu_x=[], t_offset=0 reproduces slitdec.c bit for bit.\n\n"
+          "The defaults (osample_x=1, no mu_x, t_offset=0) are the historic slitdec.\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"

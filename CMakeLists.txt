@@ -30,11 +30,11 @@ nanobind_add_module(
   STABLE_ABI
   NB_STATIC
   slitdec/slitdec_wrapper.cpp
-  slitdec/slitdec_ox.c
+  slitdec/slitdec.c
 )
 
 # Explicitly set language for C file
-set_source_files_properties(slitdec/slitdec_ox.c PROPERTIES LANGUAGE C)
+set_source_files_properties(slitdec/slitdec.c PROPERTIES LANGUAGE C)
 
 target_include_directories(charslit PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/slitdec

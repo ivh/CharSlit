@@ -9,7 +9,8 @@ from synth import box_int, fp_spec, make_swath
 NC, NR = 400, 136
 TR = slice(30, NC - 30)
 C1 = 8 / NR
-LINEAR = dict(osample_x=1, mu_x=[], t_offset=0.0)  # slitdec.c
+LINEAR = dict(osample_x=1, mu_x=[], t_offset=0.0)  # the defaults: historic slitdec
+OX8 = dict(osample_x=8, t_offset=0.5)              # recommended; mu_x defaults to the whitening penalty
 
 
 @pytest.fixture(scope="module")
@@ -46,7 +47,7 @@ def test_tilt_reference_point(fp_swath, osample):
     fp, im, ycen, sc, _ = fp_swath
     expected = C1 / (2 * osample)
     old = line_shift(fp, extract(im, ycen, sc, osample=osample, **LINEAR)["spectrum"])
-    new = line_shift(fp, extract(im, ycen, sc, osample=osample, osample_x=16)["spectrum"])
+    new = line_shift(fp, extract(im, ycen, sc, osample=osample, osample_x=16, t_offset=0.5)["spectrum"])
     assert abs(abs(old) - expected) < 0.25 * expected
     assert abs(new) < 0.25 * expected
 
@@ -55,7 +56,7 @@ def test_line_bias_vs_linear(fp_swath):
     """Fine bins remove most of the line-profile error of the two-column split."""
     _, im, ycen, sc, truth = fp_swath
     err = {}
-    for name, kw in (("linear", LINEAR), ("ox8", {})):
+    for name, kw in (("linear", LINEAR), ("ox8", OX8)):
         sp = extract(im, ycen, sc, osample=8, **kw)["spectrum"]
         err[name] = np.sqrt(((sp - truth)[TR] ** 2).mean()) / truth.max()
     assert err["ox8"] < 1e-3
@@ -64,7 +65,7 @@ def test_line_bias_vs_linear(fp_swath):
 
 def test_spectrum_is_mean_of_fine(fp_swath):
     _, im, ycen, sc, _ = fp_swath
-    r = extract(im, ycen, sc, osample=8, osample_x=4)
+    r = extract(im, ycen, sc, osample=8, osample_x=4, t_offset=0.5)
     fine = r["spectrum_fine"].reshape(NC, 4).mean(axis=1)
     np.testing.assert_allclose(r["spectrum"], fine, rtol=1e-12, atol=1e-9)
 
@@ -78,7 +79,7 @@ def test_fine_spectrum_recovers_undersampled_lines():
     xf = np.arange(NC * ox) / ox - 0.5
     truth = 3000 * box_int(fp, xf, xf + 1 / ox) * ox
     core = slice(30 * ox, (NC - 30) * ox)
-    r = extract(im, ycen, sc, osample=8, osample_x=ox, mu_x=[0, 0, 1e-6])
+    r = extract(im, ycen, sc, osample=8, osample_x=ox, mu_x=[0, 0, 1e-6], t_offset=0.5)
     err = lambda v: np.sqrt(((v - truth)[core] ** 2).mean()) / truth[core].max()
     stair = np.repeat(extract(im, ycen, sc, osample=8, **LINEAR)["spectrum"], ox)
     assert err(r["spectrum_fine"]) < 0.02
@@ -87,14 +88,14 @@ def test_fine_spectrum_recovers_undersampled_lines():
 
 def test_out_x_is_mean_of_fine_bins(fp_swath):
     _, im, ycen, sc, _ = fp_swath
-    r = extract(im, ycen, sc, osample=8, osample_x=8, out_x=2)
+    r = extract(im, ycen, sc, osample=8, out_x=2, **OX8)
     np.testing.assert_allclose(r["spectrum_out"], r["spectrum_fine"].reshape(NC * 2, 4).mean(axis=1),
                                rtol=1e-13, atol=1e-9)
-    assert "spectrum_out" not in extract(im, ycen, sc, osample=8)
-    np.testing.assert_allclose(extract(im, ycen, sc, osample=8, out_x=1)["spectrum_out"], r["spectrum"],
+    assert "spectrum_out" not in extract(im, ycen, sc, osample=8, **OX8)
+    np.testing.assert_allclose(extract(im, ycen, sc, osample=8, out_x=1, **OX8)["spectrum_out"], r["spectrum"],
                                rtol=1e-12, atol=1e-9)
     with pytest.raises(RuntimeError):
-        extract(im, ycen, sc, osample=8, osample_x=8, out_x=3)
+        extract(im, ycen, sc, osample=8, out_x=3, **OX8)
 
 
 class TestPropagatedUncertainty:
@@ -104,7 +105,7 @@ class TestPropagatedUncertainty:
         m, ycen, sc, _ = make_swath(dict(kind="flat"), nc, nr, c1=4 / nr, nsub=8)
         rng = np.random.default_rng(7)
         out = {}
-        for name, kw in (("linear", LINEAR), ("weak", dict(osample_x=8, mu_x=[0, 0, 1e-6]))):
+        for name, kw in (("linear", LINEAR), ("weak", dict(osample_x=8, mu_x=[0, 0, 1e-6], t_offset=0.5))):
             runs = []
             for _ in range(40):
                 d = m + np.sqrt(m) * rng.standard_normal(m.shape)
@@ -140,9 +141,9 @@ class TestPropagatedUncertainty:
         _, im, ycen, sc, _ = fp_swath
         unc = np.sqrt(np.abs(im) + 1)
         a = (im, unc, np.ones(im.shape, np.uint8), ycen, sc, np.zeros(NR))
-        r0 = charslit.slitdec(*a, kappa=0.0)
-        r1 = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", out_x=2, nlag=3)
-        r2 = charslit.slitdec(*a, kappa=0.0, uncertainty="scaled", out_x=2, nlag=3)
+        r0 = charslit.slitdec(*a, kappa=0.0, **OX8)
+        r1 = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", out_x=2, nlag=3, **OX8)
+        r2 = charslit.slitdec(*a, kappa=0.0, uncertainty="scaled", out_x=2, nlag=3, **OX8)
         assert "covariance" not in r0 and "chi2" not in r0
         np.testing.assert_array_equal(r0["spectrum"], r1["spectrum"])
         assert r1["covariance"].shape == (NC * 2, 4)
@@ -155,3 +156,12 @@ class TestPropagatedUncertainty:
         np.testing.assert_allclose(np.sqrt(var), r1["uncertainty"], rtol=1e-9, atol=1e-12)
         with pytest.raises(RuntimeError):
             charslit.slitdec(*a, uncertainty="horne")
+
+
+def test_defaults_are_historic(fp_swath):
+    """A plain call is the linear split; osample_x > 1 alone gets the whitening penalty."""
+    _, im, ycen, sc, _ = fp_swath
+    a = (im, np.ones_like(im), np.ones(im.shape, np.uint8), ycen, sc, np.zeros(NR))
+    np.testing.assert_array_equal(charslit.slitdec(*a)["spectrum"], charslit.slitdec(*a, **LINEAR)["spectrum"])
+    np.testing.assert_array_equal(charslit.slitdec(*a, osample_x=8)["spectrum"],
+                                  charslit.slitdec(*a, osample_x=8, mu_x=[0, 0, 1.64e-4])["spectrum"])

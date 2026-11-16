@@ -22,7 +22,9 @@ PH = np.arange(8) / 8 + 0.045; SEEDS = range(6)
 k6 = lambda m: [0.0] * 5 + [m]; k3 = lambda m: [0.0, 0.0, m]
 MU3 = [1e-7, 1e-6, 8.2e-6, 3e-5, 1.64e-4, 1e-3]
 PEN = [("none", [])] + [(f"mu3={m:g}", k3(m)) for m in MU3] + [("mu6=1e-10", k6(1e-10)), ("mu6=1.9e-8", k6(1.9e-8))]
-CONF = [(1, "linear", [], dict(t_offset=0.0))] + [(s, n, m, {}) for s in (2, 3, 4, 8) for n, m in PEN]
+CONF = [(1, "linear", [], dict(t_offset=0.0))] + [(s, n, m, dict()) for s in (2, 3, 4, 8) for n, m in PEN]
+for c in CONF[1:]:
+    c[3]["t_offset"] = 0.5
 images = {}
 for ip, ph in enumerate(PH):
     x0 = ncols / 2 + ph

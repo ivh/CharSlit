@@ -7,8 +7,10 @@ sampling-recovery experiments: [bisector_experiments.md](bisector_experiments.md
 
 Unless stated otherwise: synthetic swaths (`tests/synth.py`, flat-topped slit, photon noise,
 flux 3000 per column), `osample=8`, `kappa=0`, joint slit-function/spectrum fit. "Linear"
-means `osample_x=1, mu_x=[], t_offset=0`, which is master's `slitdec.c`. "Default" means
-`osample_x=8, mu_x=(0, 0, 1.64e-4)`. Nothing here is from real frames with real variances
+means `osample_x=1, mu_x=[], t_offset=0`, the historic `slitdec.c` and still what a plain
+call does. "Default" (or "ox 8, default") means `osample_x=8, t_offset=0.5` with the default
+penalty `mu_x=(0, 0, 1.64e-4)`; these were the function defaults while the experiments ran
+and were made opt-in afterwards. Nothing here is from real frames with real variances
 except where a CRIRES+ or ANDES file is named.
 
 ## Summary
@@ -271,7 +273,7 @@ Recorded because some of them were written into docs or commit messages on the w
 
 ## Open
 
-- Real frames with real variances: none of the ox defaults, the weak penalty or the
+- Real frames with real variances: none of `osample_x=8`, the weak penalty or the
   propagated uncertainties have been assessed on them.
 - A slit function that varies along the dispersion, or line shapes that vary along the slit
   (the ESPRESSO case that motivated `weights=`): all synthetic tests have identical rows.

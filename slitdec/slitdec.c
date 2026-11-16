@@ -1,10 +1,10 @@
-/* slitdec_ox: slitdec with the spectrum oversampled along x as well as the slit
-   function along y.
+/* slitdec with the spectrum optionally oversampled along x as well as the slit
+   function along y ("slitdec_ox").
 
-   Derived from CharSlit slitdec.c (commit c878d00, as vendored in PyReduce), by
-   N. Piskunov (github.com/nikolai-piskunov/slitdec_ox); weights='model' brought
-   up to CharSlit 5e38be4 (variance fit a * model + b).
-   Differences from slitdec():
+   N. Piskunov's slitdec_ox (github.com/nikolai-piskunov/slitdec_ox), derived from
+   CharSlit slitdec.c c878d00 and taken back as slitdec.c in November 2026. With
+   osample_x = 1, no mu_x and t_offset = 0 it reproduces that slitdec() bit for bit.
+   What osample_x > 1 and the new arguments add:
    - The spectrum is solved on a fine grid of osample_x bins per detector column
      (sP_fine, ncols * osample_x values, a piecewise-constant density in the same
      units as sP). A sub-pixel of the slit function at column x, shifted by the
@@ -34,7 +34,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <math.h>
-#include "slitdec_ox.h"
+#include "slitdec.h"
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define max(a, b) (((a) > (b)) ? (a) : (b))
@@ -1106,7 +1106,7 @@ static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, in
     return rc;
 }
 
-int slitdec_ox2(    int ncols,
+int slitdec(        int ncols,
                     int nrows,
                     double *im,
                     double *pix_unc,
@@ -1115,11 +1115,6 @@ int slitdec_ox2(    int ncols,
                     double *slitcurve,
                     double *slitdeltas,
                     int osample,
-                    int osample_x,
-                    const double *mu_x,
-                    int nk_x,
-                    const double *mu_y,
-                    int nk_y,
                     double lambda_sP,
                     double lambda_sL,
                     int maxiter,
@@ -1127,21 +1122,27 @@ int slitdec_ox2(    int ncols,
                     int use_preset,
                     int weight_mode,
                     double noise_floor,
-                    double t_offset,
                     double *sP,
-                    double *sP_fine,
                     double *sL,
                     double *model,
                     double *unc,
                     double *info,
+                    int osample_x,
+                    const double *mu_x,
+                    int nk_x,
+                    const double *mu_y,
+                    int nk_y,
+                    double t_offset,
                     int y_lower_lim,
+                    double *sP_fine,
                     int unc_mode,
                     int out_x,
                     int nlag,
                     double *cov,
                     double *chi2)
 {
-    /* Parameters as slitdec() except:
+    /* The first 21 arguments are those of slitdec() before osample_x existed, in the
+       same order. New ones:
        osample_x : fine spectrum bins per detector column (>= 1)
        mu_x[k-1] : spectrum penalty on the k-th derivative, k = 1..nk_x, in
                    physical units (see header comment); nk_x <= SLITDEC_OX_KMAX

@@ -86,7 +86,7 @@ The weights come from slitdec's own model, which is smooth and does not carry th
     w = 1 / (a · max(model, 0) + b)
 
 a and b are refitted to pix_unc² at every refresh, as a straight line pix_unc² ≈ a·model + b over
-the usable pixels (`variance_fit` in `slitdec.c`, `slitdec_ox.c` on the `slitdec_ox` branch):
+the usable pixels (`variance_fit` in `slitdec.c`):
 
 - **Why affine.** The decomposed image is usually background subtracted (nodding A−B, sky or
   scattered-light subtraction). The model then holds only the object, while the variance still

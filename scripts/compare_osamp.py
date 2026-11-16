@@ -78,7 +78,7 @@ def extract(data, s, lambda_sP, mu3):
         data["im"], data["pix_unc"], data["mask"].copy(), data["ycen"],
         data["slitcurve"], data["slitdeltas"],
         osample=data["osample"], osample_x=s,
-        lambda_sP=lambda_sP, mu_x=mu_x_of(mu3),
+        lambda_sP=lambda_sP, mu_x=mu_x_of(mu3), t_offset=0.5,
     )
     assert r["return_code"] == 0, f"slitdec failed at osample_x={s}"
     sp = r["spectrum_fine"]

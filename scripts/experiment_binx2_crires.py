@@ -64,7 +64,7 @@ def extract(sw, s, mu3=0.0):
         np.zeros(im.shape[0]),
         osample=6, osample_x=s,
         lambda_sP=0.0, lambda_sL=1.0,
-        mu_x=[0.0, 0.0, mu3] if mu3 > 0 else [], kappa=10.0,
+        mu_x=[0.0, 0.0, mu3] if mu3 > 0 else [], t_offset=0.5, kappa=10.0,
     )
     if r["return_code"] != 0:
         raise RuntimeError(

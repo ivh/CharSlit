@@ -22,8 +22,6 @@ import charslit
 REFERENCE_DIR = Path(__file__).parent / "reference_data"
 COMPARED_KEYS = ("spectrum", "slitfunction", "model", "uncertainty")
 RTOL = 1e-10
-# slitdec_ox settings that reproduce slitdec.c, against which the goldens were made
-COMPAT = dict(osample_x=1, mu_x=[], t_offset=0.0)
 
 
 @pytest.fixture
@@ -157,7 +155,6 @@ def test_synthetic_golden(case_name, golden_check):
         data["slitcurve"],
         data["slitdeltas"],
         **data["kwargs"],
-        **COMPAT,
     )
     assert result["return_code"] == 0
     golden_check(f"synthetic_{case_name}", result)
@@ -175,7 +172,6 @@ def test_real_data_golden(real_data_files, golden_check):
         osample=data["osample"],
         lambda_sP=data["lambda_sP"],
         lambda_sL=data["lambda_sL"],
-        **COMPAT,
     )
     assert result["return_code"] == 0, f"slitdec failed on {data['filename']}"
     golden_check(f"real_{Path(data['filename']).stem}", result)
