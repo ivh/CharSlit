@@ -17,7 +17,10 @@ mu3 ≈ 1e-6 for sub-pixel lines at high S/N, default otherwise. `out_x` returns
 spectrum on a coarser sub-pixel grid; `uncertainty='propagated'|'scaled'` gives errors and
 covariances propagated through the solve (the default `'residual'` is 25 % low on tilted
 slits with the linear split or a weak penalty). Known issue: kappa clipping re-enables
-input-masked pixels (master too). The rest of this file describes master's
+zero-filled NaN pixels (master too), parked in mask_nan.md. Docs: docs/slitdec_ox.md
+(reference), docs/ox_experiments.md (all measurements of November 2026),
+docs/bisector_experiments.md (bisector primer, experiment designs); deferred ideas in
+LATER.md; new tests in tests/test_ox.py. The rest of this file describes master's
 `slitdec.c`; most of it (zeta layout, flat fast path, weights) carries over, but function
 and line references point to `slitdec.c`.
 

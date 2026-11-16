@@ -54,16 +54,21 @@ uncertainty = result['uncertainty']    # Spectrum uncertainties
 info = result['info']                  # [success, cost, status, iter, delta_x]
 ```
 
+On the `slitdec_ox` branch the spectrum is solved on `osample_x=8` fine bins per column
+(N. Piskunov's slitdec_ox, GPL-3.0). Extra arguments: `osample_x`, `mu_x`, `mu_y`, `out_x`,
+`uncertainty`; extra results: `spectrum_fine`, `spectrum_out`, `covariance`, `chi2`. See
+[docs/slitdec_ox.md](docs/slitdec_ox.md) and [docs/ox_experiments.md](docs/ox_experiments.md).
+
 Pixel weights trade noise against a line-spread function that does not depend on S/N; see
 [docs/slitdec_weights.md](docs/slitdec_weights.md) for when to use which.
 
 ## Testing
 
 ```bash
-# Run fast tests (24 tests, ~0.2s)
+# Run fast tests
 uv run pytest
 
-# Run visualization tests (8 tests, ~5s, generates plots in test_data_output/)
+# Run visualization tests (generates plots in test_data_output/)
 uv run pytest -m save_output
 ```
 

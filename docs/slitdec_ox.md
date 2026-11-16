@@ -22,6 +22,12 @@ derivative of the spectrum), `mu_y=None` (slit function; None = `lambda_sL`),
 Extra outputs: `spectrum_fine` (ncols·osample_x) and `info_ox` = [dropped zeta entries,
 sP band half-width, damping x, resolution x [px], damping y, resolution y [px]].
 `lambda_sP` is master's unscaled first-difference penalty, applied between fine bins.
+`out_x=n` (n divides `osample_x`) adds `spectrum_out`, the spectrum on n bins per column
+(mean of adjacent fine bins, nested in the detector pixels). `uncertainty=` selects the
+error estimate, see below.
+
+Measurements behind the recommendations here, and the results of November 2026:
+[ox_experiments.md](ox_experiments.md).
 
 ## Choosing osample_x and mu_x (ox_geometry.py)
 
@@ -33,6 +39,15 @@ sP band half-width, damping x, resolution x [px], damping y, resolution y [px]].
   (unavoidable, shared by ±π). For shear ≲ 0.5 px the output stays ~Poisson (0.94).
 - **osample_x is set by the narrowest line, not by the tilt**: rms line error ≈
   0.025 (h/σ)², h = 1/osample_x. FWHM 4.5 px: 8 → 1e-4, 16 → 2.5e-5.
+- **The penalty strength is a noise/resolution trade.** The default whitens the noise and is
+  right for lines of FWHM ≳ 1.8 px and at low S/N. For lines narrower than a pixel at high
+  S/N use mu3 ≈ 1e-6 (`mu_x=(0, 0, 1e-6)`) and read `spectrum_fine`; the extraction noise is
+  then as for the linear split (1.7× in variance on a tilted slit). k = 3 is enough.
+- **Never `mu_x=[]` with `osample_x > 1`**: patterns that repeat every pixel with zero mean
+  are exact null modes, the solve does not converge.
+- **`osample_x = 8` for everything**; smaller values are not better for anything measured.
+- **`out_x`**: 2 is enough for FWHM ≈ 1.8 px, lines narrower than a pixel need 4. The saved
+  values are bin averages.
 - **osample (y)**: no new requirement; the shift change over one subpixel, c1/osample,
   only adds c1²/(12 osample²) px² to the line variance (1e-6 relative for ANDES).
 
@@ -52,27 +67,14 @@ Shear 2 and 16 px and `model` weights give the same picture (osample_x = 8: var/
 1.02–1.04, bias 1e-4). The reported SIG (residual based) is ≈ √S in all cases, which
 is now correct for osample_x ≥ 8 and 1.3× too small for slitdec.c.
 
-Re-measured 2026-11-16 (`scripts/ox_noise.py <shear> <weights> 60`), var/mean relative to
-a vertical slit, identical for `none` and `model` weights to ±0.01:
-
-| shear [px] | linear | ox 4 | ox 8 | ox 16 | ox 8, mu3 = 1e-6 |
-|---|---|---|---|---|---|
-| 0.5 | 1.26 | 1.00 | 0.96 | 0.96 | 1.11 |
-| 2 | 1.91 | 1.08 | 1.03 | 1.02 | 1.84 |
-| 8 | 1.74 | 1.08 | 1.03 | 1.02 | 1.68 |
-| 16 | 1.77 | 1.09 | 1.04 | 1.03 | 1.71 |
-
-The noise is whitened by the penalty, not by the fine bins: at mu3 = 1e-6 (the
-sampling-recovery setting) the excess is back, while the line bias stays at 1e-4. The excess
-is anticorrelated (lag-1 −0.16 to −0.31) and mostly averages out: variance of 8-pixel sums
-1.09-1.12 for both the linear split and mu3 = 1e-6, 1.02-1.04 for the default. The reported
-uncertainty is ≈ 0.99 √S in every case, i.e. 1.3× too small wherever var/mean ≈ 1.7.
+Re-measured for shears of 0.5 to 16 px, and for a weak penalty, in ox_experiments.md,
+section 2: the penalty whitens the noise, the fine bins remove the line bias.
 
 ## Uncertainties (`uncertainty=`)
 
 `'residual'` (default, as slitdec): per column from data − model. It is ≈ √S whatever the
 extraction noise is, so 1.3× too small on a tilted slit with the linear split or a weak
-penalty (table above). The cr2res PIPE-12658 formula (Horne, per column from pix_unc) has
+penalty. The cr2res PIPE-12658 formula (Horne, per column from pix_unc) has
 the same blind spot (0.73-0.77 in the same test) and was not ported.
 
 `'propagated'`: the pixel variances carried through the last spectrum solve,
@@ -83,166 +85,47 @@ Returns `uncertainty` (detector grid), `covariance` (ncols·out_x, nlag+1) on th
 grid (lags 0..`nlag`, default 2) and `chi2`, the reduced χ² of the residuals against V.
 `'scaled'` multiplies the variances by `chi2`, for pix_unc of unknown scale.
 
-Reported σ / empirical scatter (`scripts/ox_unc_check.py`, flat spectrum, 40 realisations,
-photon noise; all four weight modes agree to ±0.01):
-
-| shear | setting | residual | propagated | on out_x = 2 | lag-1 corr. emp / predicted |
-|---|---|---|---|---|---|
-| 0 | linear | 1.01 | 1.03 | | 0.00 / 0.00 |
-| 2 px | linear | 0.73 | 1.03 | | −0.32 / −0.32 |
-| 8 px | linear | 0.77 | 1.02 | | −0.26 / −0.27 |
-| 2-8 px | ox 8, default | 0.99-1.00 | 1.02-1.03 | 1.02 | −0.02 / −0.02 (out_x 2: +0.49 / +0.49) |
-| 2-8 px | ox 8, mu3 = 1e-6 | 0.74-0.77 | 1.02-1.03 | 1.03 | −0.17 / −0.17 (out_x 2: −0.36 / −0.37) |
-
-With 30 e⁻ read noise: propagated 1.03-1.06 (20 realisations), residual 0.79-0.83 and
-1.07-1.12. The 2-3 % excess is partly the small-sample bias of the empirical σ.
-Cost on real frames: +2-3 % of the run time (ANDES_R_FP1 2.00 → 2.06 s at ox 8).
+Validation (ox_experiments.md, section 9): reported σ / empirical scatter is 1.02-1.03 in
+all cases, including those where `'residual'` gives 0.73-0.77, and the predicted lag-1
+correlations match the measured ones to 0.01. Cost +2-3 % of the run time.
 
 Limits: the slit function is taken as known; the number is the noise of the regularised
-estimate and says nothing about smoothing bias; and it is only as good as V. On the test
-frames, whose fixture pix_unc is √(|im|+1) rather than a real variance, chi2 is 3-95, so
-use `'scaled'` or check `chi2` before trusting `'propagated'` on real data.
+estimate and says nothing about smoothing bias; and it is only as good as V. Use `'scaled'`
+or check `chi2` when pix_unc is not a real variance. Input-masked pixels that the outlier
+rejection re-enables enter with their pix_unc, see [../mask_nan.md](../mask_nan.md).
 
-**Outlier rejection re-enables masked pixels.** With `kappa > 0` the mask is rewritten each
-iteration from |model − im| < kappa·dev, ignoring the input mask (slitdec.c on master does
-the same): on CRIRES2 10089 of 12366 input-masked pixels come back as good. They enter the
-fit with whatever `im` holds there, and with the fixture's pix_unc = 1e10 for them the
-propagated variance explodes (correctly, for the solve as done). Not changed here: fixing
-it alters the goldens.
-
-## Regression
+## Regression and tests
 
 `osample_x=1, mu_x=[], t_offset=0` reproduces master's slitdec.c: `tests/test_regression.py`
-runs the golden suite with these settings (all 12 cases pass at rtol 1e-10, exact mask), and
-a one-off ctypes comparison against master's C (2026-11-06; tilted and sloped traces, noise,
-kappa 10) was bit-identical for all four weight modes. The default-run tests in
-`tests/test_slitdec.py` use the ox defaults; `tests/test_tilt_reference.py` checks the tilt
-reference shift, the line bias against the linear split and `spectrum` = mean of
-`spectrum_fine`. `scripts/ox_noise.py` reproduces the table above.
+runs the golden suite with these settings (rtol 1e-10, exact mask), and a one-off comparison
+against master's C was bit-identical for all four weight modes. `tests/test_slitdec.py` runs
+at the ox defaults. `tests/test_ox.py` covers what is new: tilt reference point, line bias,
+`spectrum` = mean of `spectrum_fine`, sampling recovery, `out_x`, propagated uncertainties.
 
-## Swath edges
-
-The first `delta_x` columns are zeroed as in slitdec.c, but the transient reaches further.
-Flat spectrum, 200 × 136 swath, osample 8, relative error in the first kept columns:
-
-| shear | linear (slitdec.c) | osample_x = 8 |
-|---|---|---|
-| 0 (c1 = 1e-12) | 7e-6 | +5e-3, −4e-3, +2e-3, … (decays over ~8 columns) |
-| 2 px | +0.12, −0.04, +0.01, … | +4e-3, −5e-3, +2e-3, … |
-| 8 px | +8e-3, −2e-3, … | −3e-4, +3e-4, … |
-
-With a real tilt ox is better than the linear split; only an untilted swath gets a new edge
-ripple (the k = 3 penalty couples the edge bins, from which off-swath parts are dropped, to
-the interior). Overlapping swaths hide both.
+Swath edges: the transient at the ends reaches a few columns beyond `delta_x`
+(ox_experiments.md, section 3); overlapping swaths hide it.
 
 ## Finding in slitdec.c: tilt evaluated half a subpixel off
 
 slitdec.c evaluates the curvature at t = (lower edge of the y-subpixel) − ycen instead
 of the subpixel centre. Every line then shifts by c1/(2·osample): 3.7 mpx for c1 = 8/136
-at osample 8, scaling exactly with 1/osample (`test_tilt_reference.py`). It is smooth in
+at osample 8, scaling with 1/osample (`tests/test_ox.py`). It is smooth in
 x and calibrates out if science and calibration share osample and tilt, but it changes
 with osample and with any tilt difference (~5 m/s-equivalent for c1 ≈ 0.12 at osample 8 on
-ANDES). slitdec_ox evaluates at the centre (`slitdec_ox_t_offset = 0.5`, a global for
-now). The same one-line fix applies to slitdec.c.
+ANDES). slitdec_ox evaluates at the centre (`t_offset=0.5`; 0 reproduces slitdec.c). The
+same one-line fix applies to slitdec.c on master.
 
 ## Sampling recovery (the former `osamp_spec` branch)
 
-`osamp_spec` (fine spectrum bins to recover structure below the pixel scale, for
-bisector/RV work on under-sampled lines) used the same forward model, so its purpose is
-served here by reading `spectrum_fine`; its C code and `lambda_fringe` are not ported. The
-experiment scripts and docs came along (`scripts/compare_osamp.py`,
-`experiment_synthetic_lsf.py`, `experiment_binx2_crires.py`, `analyse_wide_bisector.py`,
-`make_swath.py`; `docs/OSAMP_*.md`, which describe the old implementation), with
-`osamp_spec=s` → `osample_x=s` and the `lambda_fringe` grids replaced by `mu3` grids.
-All checks below 2026-11-16.
-
-**Equivalence.** One sP solve with a common preset slit function, s = 2, 3, same
-`lambda_sP > 0` in both codes, `t_offset=0`: fine spectra agree to 6e-10 and models to
-7e-10 away from the swath ends (the 1e-9 ridge). They differ in the first ~`delta_x`+6
-columns only (bins hanging off the swath are dropped here, deposited partly there).
-
-**Null space.** A pattern that repeats every pixel and has zero mean integrates to zero over
-any unit-wide pixel, whatever the shift: s−1 exact null modes that no tilt can constrain (the
-"fringe at the osamp frequency" of OSAMP_SPEC.md; the tilt constrains everything else).
-Without a penalty the fine solution is therefore not defined: both codes hit `maxiter` on
-the synthetic LSF cases and the result keeps drifting (osamp_spec, s = 3: rms_cont 0.077 at
-20 iterations, 0.090 at 100), and `osample_x=8, mu_x=[]` returns garbage. Do not use
-`mu_x=[]` with `osample_x > 1`. The baseline numbers in OSAMP_EXPERIMENTS.md (rms_cont
-0.081/0.053 at s = 2/3, "lambda_fringe = 0") are not reproduced by any version of the
-osamp_spec C code with today's script (0.174/0.077, June, October and current code alike);
-a weak penalty gives about those values, so they were probably made with one.
-
-**Transfer of `spectrum_fine`.** Measured on a noise-free random line list (s = 3, shear
-8 px) it follows B²/(B² + P/1.5), B = sinc(ν/2) the pixel box, P = Σ mu_k ν^2k, not the
-nominal 1/(1 + P) that `info_ox` reports: exactly 0 at 2π, and at the default mu3 0.65 at
-1.1π, 0.30 at 1.4π, 0.06 at 1.6π. mu3 = 8.2e-6 keeps 1.0 to 1.4π and 0.58 at 1.6π.
-The bin values behave like point samples (a bin-averaged truth is exceeded by 1/sinc²(ν/2s)).
-
-**Which settings** (`scripts/ox_bis_study.py`: synthetic asymmetric line on a slit with 4 px of
-tilt sweep, 8 sub-pixel line positions × 6 noise seeds, peak ~2000-3000 counts; BIS bias =
-mean over all, phase sd = scatter of the per-position means, which is what fakes an RV
-signal; mpx):
-
-| LSF | setting | BIS bias | phase sd | noise sd | FWHM (truth) | rms_cont |
-|---|---|---|---|---|---|---|
-| wide, 1.79 px | linear (master) | −6.6 | 60.1 | 3.0 | 1.855 (1.785) | 0.057 |
-| | ox 3, mu3 = 1e-6 | −0.6 | 3.3 | 6.1 | 1.785 | 0.018 |
-| | ox 8, mu3 = 1e-6 | −0.5 | 3.2 | 6.3 | 1.784 | 0.0070 |
-| | ox 8, default 1.64e-4 | −2.4 | 2.5 | 3.5 | 1.816 | 0.0074 |
-| narrow, 0.89 px | linear (master) | −10.5 | 144.3 | 1.2 | 1.316 (0.894) | 0.136 |
-| | ox 3, mu3 = 1e-6 | −4.5 | 4.2 | 2.0 | 0.960 | 0.050 |
-| | ox 8, mu3 = 1e-6 | −5.5 | 0.5 | 1.6 | 0.967 | 0.025 |
-| | ox 8, default 1.64e-4 | −6.4 | 0.4 | 0.4 | 1.235 | 0.062 |
-
-- The position-dependent bisector error of the linear split (60-144 mpx) is gone for any
-  `osample_x ≥ 2` with any penalty tried (phase sd at the level the noise allows).
-- `osample_x = 8` is as good as 2-4 on the wide LSF and clearly better on the narrow one
-  (phase sd 0.3-1 mpx against 1-6 at s = 3 and 7-19 at s = 2), and better on rms_cont
-  throughout, so there is no reason for a separate small-s mode; the two purposes differ
-  only in `mu_x`. Figures: `scratch/ox_bis_study_<case>.png` (mu3 from 1e-7 to 1e-3).
-- The penalty strength is a noise/resolution trade. The default is right for lines of
-  FWHM ≳ 1.8 px (2 % broader, lowest noise) and at low S/N (wide LSF, peak ~100 counts: BIS
-  noise sd 14 vs 29 mpx for 1e-6). For lines narrower than a pixel at high S/N use
-  mu3 ≈ 1e-6 (FWHM 0.97 vs 1.24 at the default, truth 0.89).
-- k = 6 instead of k = 3 at matched strength made no measurable difference; one knob (mu3)
-  is enough.
-- Real data, CRIRES+ U-Ne binned by √3 (`experiment_binx2_crires.py --xbin sqrt3`), BIS of the
-  7-line stack, truth −162 mpx: staircase −397; ox s = 2/3/4 at mu3 = 1e-6: −157/−182/−194,
-  8.2e-6: −178/−166/−168, default: −175/−148/−146. (`lambda_fringe = 1e-3` gave −330..−365.)
-  Not analysed further (per-line metrics, s = 8).
-
-**The other cases of OSAMP_EXPERIMENTS.md, re-run** (single realisation each, as there;
-`experiment_synthetic_lsf.py`, tags `_ox`, `_notilt`, `_lowsn`, `_ssweep`, `_narrow`, `_wide`):
-
-| case (true FWHM) | s = 1 | s = 2 | s = 3 | at mu3 |
-|---|---|---|---|---|
-| baseline (0.894): FWHM | 1.114 | 0.956 | 0.968 | 1e-6 |
-| baseline: rms_cont | 0.108 | 0.080 | 0.050 | 1e-6 |
-| narrow (0.444): FWHM | 0.991 | 0.722 | 0.713 | 1e-6 |
-| narrow: rms_cont | 0.240 | 0.194 (8.2e-6) | 0.157 | 1e-6 |
-| wide (1.785): FWHM | 1.772 | 1.786 | 1.822 | 1e-6 |
-| wide: rms_cont | 0.058 | 0.027 | 0.018 | any |
-| low S/N (peak 87): rms_cont | 0.112 | 0.077 (8.2e-6) | 0.054 | 1e-6 |
-| no tilt (0.001 px/row): rms_cont | 0.098 | 0.083 | 0.073 | 1e-6 |
-
-- Baseline s sweep at mu3 = 1e-6: rms_cont 0.108, 0.080, 0.050, 0.039, 0.032, 0.029, 0.024
-  for s = 1, 2, 3, 4, 5, 6, 8, with FWHM 0.95-0.97 throughout: no saturation at s = 5 and no
-  undershoot, unlike the unregularised sweep.
-- Without tilt nothing is gained (FWHM 1.18-1.28 against 1.18 at s = 1) but nothing breaks
-  either; the unregularised s = 2 gave rms_cont 0.27 there.
-- CRIRES+ at xbin = 2 (commensurate), BIS of the stack, truth −162 mpx: staircase −260;
-  s = 2/3/4 at mu3 = 1e-6: −228/−201/−140, 8.2e-6: −169/−195/−156, default: −157/−165/−143.
-- Hsim at s = 3: max|fine − staircase| stays at 19-29 % of the peak for mu3 from 0 to 1e-2
-  (29 % unpenalised). A derivative penalty pulls towards a smooth curve, not the staircase,
-  and a smooth curve through an emission line differs from its staircase by about that
-  much. So this number is not a measure of fringe noise, and the conclusion in
-  OSAMP_SPEC.md that Hsim's sub-pixel content is all fringe does not follow from it.
-- June outputs of the old engine that the re-runs would have overwritten are in
-  `scratch/old_engine/` (the wide s-sweep, bisector and √3 plots were already overwritten).
-
-Cost on real frames, ms per iteration at `osample_x` = 1/2/3/8 (`scripts/bench.py 2 <ox> 1.2e6`):
-ANDES_R_FP1 404 × 2556: 73/113/143/325; CRIRES2 176 × 2048: 21/32/40/91 (osamp_spec:
-62/112/293 and 18/35/93 at s = 1/2/3).
+`osamp_spec` solved the spectrum on s fine bins per column to recover line shape below the
+pixel scale (bisector/RV work on under-sampled lines). It used the same forward model, so
+here that purpose is served by `spectrum_fine` (or `spectrum_out`) with a weak penalty; its
+C code and `lambda_fringe` are not ported. The experiment scripts came along with
+`osamp_spec=s` → `osample_x=s` and `mu3` grids in place of the `lambda_fringe` grids:
+`scripts/compare_osamp.py`, `experiment_synthetic_lsf.py`, `experiment_binx2_crires.py`,
+`analyse_wide_bisector.py`, `make_swath.py`, and new `ox_bis_study.py`. Background and
+experiment design: [bisector_experiments.md](bisector_experiments.md); results:
+ox_experiments.md, sections 4-8.
 
 ## Penalties: mu_k in x and y (penalty_design.py, sl_penalty_study.py)
 

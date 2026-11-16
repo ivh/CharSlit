@@ -15,7 +15,7 @@ Run:
 Outputs compare_osamp.png and prints a recovered-FWHM table. If the FWHM at
 s>1 is meaningfully narrower than at s=1, the tilt carried real super-resolution
 content. On data with little tilt / well-sampled lines the rows collapse onto
-the same FWHM, matching the OSAMP_SPEC.md finding.
+the same FWHM, see docs/ox_experiments.md.
 """
 
 import argparse
