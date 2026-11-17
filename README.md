@@ -51,7 +51,8 @@ spectrum = result['spectrum']          # Extracted 1D spectrum
 slitfunc = result['slitfunction']      # Slit illumination function
 model = result['model']                # Reconstructed 2D image
 uncertainty = result['uncertainty']    # Spectrum uncertainties
-info = result['info']                  # [success, cost, status, iter, delta_x]
+info = result['info']                  # [success, cost, status, iter, margin]
+margin = result['margin']              # columns at either end not to use (not zeroed)
 ```
 
 Optional (N. Piskunov's slitdec_ox): with `osample_x=8, t_offset=0.5` the spectrum is solved

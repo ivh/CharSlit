@@ -83,6 +83,7 @@ class TestOutputStructure:
             "return_code",
             "spectrum_fine",
             "info_ox",
+            "margin",
         }
         assert set(result.keys()) == expected_keys
         save_test_data(data["im"], result["model"])
@@ -428,6 +429,57 @@ class TestEdgeCases:
         )
         assert result["return_code"] == 0
         save_test_data(data["im"], result["model"], slitcurve=data["slitcurve"])
+
+    def test_edge_margin(self, curved_image_data):
+        """margin = largest slit-image shift + 2; the edge columns are not zeroed."""
+        data = curved_image_data
+        nrows = data["im"].shape[0]
+        y = np.arange(-(nrows // 2), nrows - nrows // 2 + 1)
+        shift = sum(
+            data["slitcurve"][:, k : k + 1] * y**k
+            for k in range(1, data["slitcurve"].shape[1])
+        )
+        expected = int(np.ceil(np.abs(shift).max())) + 2
+        assert expected > 2
+
+        result = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            osample=data["osample"],
+        )
+        assert result["margin"] == expected
+        assert result["info"][4] == expected
+        assert (
+            charslit.edge_margin(
+                data["slitcurve"], data["slitdeltas"], nrows, osample=data["osample"]
+            )
+            == expected
+        )
+        assert np.all(result["spectrum"][[0, -1]] != 0)
+
+        # slitdeltas count on their own, not added to the curvature shift
+        deltas = np.full(nrows, expected - 2 + 0.5)
+        assert (
+            charslit.edge_margin(data["slitcurve"], deltas, nrows, osample=data["osample"])
+            == expected + 1
+        )
+
+    def test_edge_margin_flat(self, simple_image_data):
+        data = simple_image_data
+        result = charslit.slitdec(
+            data["im"],
+            data["pix_unc"],
+            data["mask"],
+            data["ycen"],
+            data["slitcurve"],
+            data["slitdeltas"],
+            lambda_sP=1.0,
+        )
+        assert result["margin"] == 2
 
     def test_high_smoothing(self, simple_image_data, save_test_data):
         """Test with high smoothing parameters."""

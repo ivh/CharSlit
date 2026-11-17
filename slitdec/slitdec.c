@@ -972,9 +972,9 @@ static int band_cholesky(const double *A, int n, int nx, int bx, double *L)
    is y^T M y'. One banded solve per output bin; y decays away from the bin, and both
    substitutions stop once it has fallen below 1e-10 of its maximum.
    unc[x]: sigma of the detector-pixel spectrum. cov (may be NULL): for output bin j,
-   cov[j*(nlag+1)+l] = Cov(bin j, bin j+l). Columns within delta_x of the ends give 0.
+   cov[j*(nlag+1)+l] = Cov(bin j, bin j+l).
    Returns -1 if N is not positive definite. */
-static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, int nf,
+static int propagate_unc(int ncols, int ox, int out_x, int nlag, int nf,
                          int nx, int bx, const double *N, const double *M,
                          double *unc, double *cov)
 {
@@ -1000,7 +1000,6 @@ static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, in
     for (x = 0; x < ncols && rc == 0; x++)
     {
         int dlo = nf, dhi = -1, dmlo = nf, dmhi = -1;
-        const int edge = (x < delta_x || x >= ncols - delta_x);
         for (q = 0; q < out_x; q++)
         {
             const int j = x * out_x + q, slot = j % R;
@@ -1009,12 +1008,6 @@ static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, in
             if (cov != NULL)
                 for (l = 0; l <= nlag; l++)
                     cov[(size_t)j * R + l] = 0.e0;
-            if (edge)
-            {
-                rg[0] = 1;
-                rg[1] = 0;
-                continue;
-            }
             const int i0 = j * nb, i1 = i0 + nb - 1;
             int lo = 0, hi = nf - 1;
             double zmax = 0.e0, ymax = 0.e0, s;
@@ -1095,7 +1088,7 @@ static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, in
         double v = 0.e0;
         for (r = dlo; r <= dhi; r++)
             v += yd[r] * myd[r];
-        unc[x] = edge ? 0.e0 : sqrt(v);
+        unc[x] = sqrt(v);
         for (r = dlo; r <= dhi; r++)
             yd[r] = 0.e0;
         for (r = dmlo; r <= dmhi; r++)
@@ -1104,6 +1097,47 @@ static int propagate_unc(int ncols, int ox, int out_x, int nlag, int delta_x, in
 
     free(L); free(z); free(ys); free(mys); free(yd); free(myd); free(rng);
     return rc;
+}
+
+/* Largest horizontal shift of the slit image in the swath, in detector pixels,
+   rounded up: curvature polynomial and slitdeltas, each on its own. */
+static int max_shift(int ncols, int nrows, const double *slitcurve, const double *slitdeltas,
+                     int osample, int y_lower_lim)
+{
+    const int ny = osample * (nrows + 1) + 1;
+    int x, y, iy, shift = 0;
+    double tmp;
+
+    for (x = 0; x < ncols; x++)
+    {
+        if (slitcurve[curve_index(x, 1)] == 0.e0 && slitcurve[curve_index(x, 2)] == 0.e0 &&
+            slitcurve[curve_index(x, 3)] == 0.e0 && slitcurve[curve_index(x, 4)] == 0.e0 &&
+            slitcurve[curve_index(x, 5)] == 0.e0)
+            continue;
+        for (y = -y_lower_lim; y < nrows - y_lower_lim + 1; y++)
+        {
+            double y2 = y * y, y3 = y2 * y, y4 = y3 * y, y5 = y4 * y;
+            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] + y2 * slitcurve[curve_index(x, 2)] +
+                            y3 * slitcurve[curve_index(x, 3)] + y4 * slitcurve[curve_index(x, 4)] +
+                            y5 * slitcurve[curve_index(x, 5)]));
+            shift = max(shift, tmp);
+        }
+    }
+    for (iy = 0; iy < ny; iy++)
+    {
+        tmp = ceil(fabs(slitdeltas[iy]));
+        shift = max(shift, tmp);
+    }
+    return shift;
+}
+
+int slitdec_margin(int ncols, int nrows, const double *slitcurve, const double *slitdeltas,
+                   int osample, int y_lower_lim)
+{
+    if (y_lower_lim < 0 || y_lower_lim >= nrows)
+        y_lower_lim = nrows / 2;
+    return max_shift(ncols, nrows, slitcurve, slitdeltas, osample, y_lower_lim) +
+           SLITDEC_EDGE;
 }
 
 int slitdec(        int ncols,
@@ -1151,7 +1185,8 @@ int slitdec(        int ncols,
                    of the y-subpixels, scaled by the mean diagonal (legacy)
        sP        : in: initial guess (ncols). out: detector-pixel spectrum
        sP_fine   : out: fine spectrum (ncols * osample_x), may be NULL
-       info      : at least 5 values; info[5], info[6] are written if
+       info      : at least 5 values: success, sP change, status, iterations and
+                   the margin of slitdec_margin(); info[5], info[6] are written if
                    info[4] is passed in as -7 (dropped zeta entries, sP band),
                    info[5..10] if it is passed in as -11: info[7], info[9] are
                    the damping ratio mu1/(2 sqrt(mu2)) in x and y (>= 1: the
@@ -1179,7 +1214,7 @@ int slitdec(        int ncols,
     int bx;
     double norm, dev, lambda, diag_tot, ww, tmp;
     double sP_change, sP_stop, sP_med;
-    int iter, delta_x;
+    int iter, delta_x, margin;
     unsigned int isum;
     int *ycen_offset;
     const int ox = osample_x < 1 ? 1 : osample_x;
@@ -1226,34 +1261,19 @@ int slitdec(        int ncols,
     if (ky > 2 * osample) /* the sL band holds differences up to 2 * osample */
         ky = 2 * osample;
 
-    delta_x = (kx == 0 && lambda_sP == 0) ? 0 : 1;
-    for (x = 0; x < ncols; x++)
-    {
-        if (slitcurve[curve_index(x, 1)] == 0.e0 && slitcurve[curve_index(x, 2)] == 0.e0 &&
-            slitcurve[curve_index(x, 3)] == 0.e0 && slitcurve[curve_index(x, 4)] == 0.e0 &&
-            slitcurve[curve_index(x, 5)] == 0.e0)
-            continue;
-        for (y = -y_lower_lim; y < nrows - y_lower_lim + 1; y++)
-        {
-            double y2 = y * y, y3 = y2 * y, y4 = y3 * y, y5 = y4 * y;
-            tmp = ceil(fabs(y * slitcurve[curve_index(x, 1)] + y2 * slitcurve[curve_index(x, 2)] +
-                            y3 * slitcurve[curve_index(x, 3)] + y4 * slitcurve[curve_index(x, 4)] +
-                            y5 * slitcurve[curve_index(x, 5)]));
-            delta_x = max(delta_x, tmp);
-        }
-    }
-    for (iy = 0; iy < ny; iy++)
-    {
-        tmp = ceil(fabs(slitdeltas[iy]));
-        delta_x = max(delta_x, tmp);
-    }
+    /* delta_x: allocation, and the columns left out of the residual statistics.
+       margin: the columns at either end a caller should not use (info[4]). */
+    delta_x = max_shift(ncols, nrows, slitcurve, slitdeltas, osample, y_lower_lim);
+    margin = delta_x + SLITDEC_EDGE;
+    if (delta_x == 0 && (kx != 0 || lambda_sP != 0))
+        delta_x = 1;
     if (4 * delta_x + 1 > ncols)
     {
         info[0] = 0;
         info[1] = sP_change;
         info[2] = -2;
         info[3] = 0;
-        info[4] = delta_x;
+        info[4] = margin;
         return -1;
     }
 
@@ -1315,7 +1335,7 @@ int slitdec(        int ncols,
         {
             free(zeta); free(m_zeta); free(z_rng);
             free(l_Aij); free(l_bj); free(p_bj); free(sPf);
-            info[0] = 0; info[1] = sP_change; info[2] = -4; info[3] = 0; info[4] = delta_x;
+            info[0] = 0; info[1] = sP_change; info[2] = -4; info[3] = 0; info[4] = margin;
             return -1;
         }
     }
@@ -1760,7 +1780,7 @@ int slitdec(        int ncols,
         sp_fill(ncols, nrows, nf, nx, bx, osample, mzz, fast_flat, im, mask, wpix, sL,
                 zeta, m_zeta, z_rng, k0col, d1col, flat_scratch, zw, p_Aij, p_bj);
         sp_penalties(p_Aij, nf, nx, bx, ox, kx, mux, lambda_sP);
-        if (propagate_unc(ncols, ox, out_x, nlag, delta_x, nf, nx, bx, p_Aij, Mb, unc, cov) == 0)
+        if (propagate_unc(ncols, ox, out_x, nlag, nf, nx, bx, p_Aij, Mb, unc, cov) == 0)
         {
             if (chi2 != NULL)
                 *chi2 = c2;
@@ -1780,10 +1800,6 @@ int slitdec(        int ncols,
         free(Mb);
     }
 
-    for (x = 0; x < delta_x; x++)
-        sP[x] = unc[x] = 0;
-    for (x = ncols - delta_x; x < ncols; x++)
-        sP[x] = unc[x] = 0;
     for (x = 0; x < ncols; x++)
         if (!isfinite(sP[x]))
         {
@@ -1793,7 +1809,7 @@ int slitdec(        int ncols,
         }
     if (sP_fine != NULL)
         for (j = 0; j < nf; j++)
-            sP_fine[j] = (j / ox < delta_x || j / ox >= ncols - delta_x) ? 0.e0 : sPf[j];
+            sP_fine[j] = sPf[j];
 
     free(sP_old);
     free(wbuf);
@@ -1821,7 +1837,7 @@ int slitdec(        int ncols,
     info[1] = sP_change;
     info[2] = status;
     info[3] = iter;
-    info[4] = delta_x;
+    info[4] = margin;
     if (want_ext)
     {
         info[5] = ndrop;

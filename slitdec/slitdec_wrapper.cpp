@@ -322,6 +322,7 @@ nb::dict slitdec_wrapper(
         result_dict["chi2"] = chi2;
     }
     result_dict["info"] = info_array;
+    result_dict["margin"] = static_cast<int>(info_all[4]);
     result_dict["info_ox"] = ext_array;
     result_dict["mask"] = mask_array;
     result_dict["return_code"] = result;
@@ -329,7 +330,60 @@ nb::dict slitdec_wrapper(
     return result_dict;
 }
 
+static int edge_margin_wrapper(
+    nb::ndarray<double, nb::ndim<2>, nb::c_contig, nb::device::cpu> slitcurve,
+    nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu> slitdeltas,
+    int nrows,
+    int osample = 6,
+    std::optional<int> y_lower_lim = std::nullopt
+) {
+    const int ncols = slitcurve.shape(0);
+    const int nc = slitcurve.shape(1);
+    const int ny = osample * (nrows + 1) + 1;
+    const int nd = slitdeltas.shape(0);
+    if (nrows < 1 || osample < 1)
+        throw std::runtime_error("nrows and osample must be >= 1");
+    if (nc > 6 || nc < 1)
+        throw std::runtime_error("slitcurve must have shape (ncols, n) where 1 <= n <= 6");
+    if (nd != nrows && nd != ny)
+        throw std::runtime_error("slitdeltas must have length nrows or ny = osample * (nrows + 1) + 1");
+
+    std::vector<double> curve(static_cast<size_t>(ncols) * 6, 0.0);
+    for (int i = 0; i < ncols; i++)
+        for (int j = 0; j < nc; j++)
+            curve[i * 6 + j] = slitcurve.data()[i * nc + j];
+    // Same interpolation as slitdec_wrapper, so the result equals info[4]
+    std::vector<double> deltas(ny);
+    for (int i = 0; i < ny; i++) {
+        if (nd == ny) {
+            deltas[i] = slitdeltas.data()[i];
+            continue;
+        }
+        double pos = i * (nrows - 1.0) / (ny - 1.0);
+        int lo = static_cast<int>(pos);
+        if (lo + 1 >= nrows) {
+            deltas[i] = slitdeltas.data()[nrows - 1];
+        } else {
+            double frac = pos - lo;
+            deltas[i] = (1.0 - frac) * slitdeltas.data()[lo] + frac * slitdeltas.data()[lo + 1];
+        }
+    }
+    return slitdec_margin(ncols, nrows, curve.data(), deltas.data(), osample,
+                          y_lower_lim.has_value() ? *y_lower_lim : -1);
+}
+
 NB_MODULE(charslit, m) {
+    m.def("edge_margin", &edge_margin_wrapper,
+          nb::arg("slitcurve"),
+          nb::arg("slitdeltas"),
+          nb::arg("nrows"),
+          nb::arg("osample") = 6,
+          nb::arg("y_lower_lim") = nb::none(),
+          "Columns at either end of a swath that slitdec's solution should not be\n"
+          "used for: the largest slit-image shift from slitcurve (ncols, n) and\n"
+          "slitdeltas (nrows or ny), rounded up, plus 2. Equals result['margin'] of\n"
+          "slitdec for the same inputs; use it to lay out overlapping swaths before\n"
+          "the solve.\n");
     m.def("slitdec", &slitdec_wrapper,
           nb::arg("im"),
           nb::arg("pix_unc"),
@@ -447,7 +501,8 @@ NB_MODULE(charslit, m) {
           "-------\n"
           "dict with keys:\n"
           "    spectrum : ndarray (ncols,)\n"
-          "        Extracted spectrum on the detector grid (mean of the fine bins)\n"
+          "        Extracted spectrum on the detector grid (mean of the fine bins).\n"
+          "        Do not use the first and last `margin` columns.\n"
           "    spectrum_fine : ndarray (ncols * osample_x,)\n"
           "        Spectrum on the fine grid\n"
           "    spectrum_out : ndarray (ncols * out_x,), only with out_x\n"
@@ -464,9 +519,13 @@ NB_MODULE(charslit, m) {
           "    chi2 : float, only if not 'residual'\n"
           "        Reduced chi^2 of data - model against the pixel variances used\n"
           "    info : ndarray (5,)\n"
-          "        Status information [success, cost, status, iter, delta_x].\n"
+          "        Status information [success, cost, status, iter, margin].\n"
           "        status: 1 converged, -1 out of iterations,\n"
           "        -2 curvature too large, -3 non-finite result, -4 out of memory\n"
+          "    margin : int\n"
+          "        Columns at either end of spectrum (and of the other per-column\n"
+          "        outputs) that should not be used: the largest slit-image shift plus\n"
+          "        2. They are returned as solved, not zeroed, and can be far off.\n"
           "    info_ox : ndarray (6,)\n"
           "        [dropped zeta entries, sP band half-width, damping ratio x,\n"
           "        nominal resolution x [px], damping ratio y, resolution y [px]].\n"

@@ -117,8 +117,12 @@ exact mask), and a one-off comparison against the old C was bit-identical for al
 weight modes. `tests/test_ox.py` covers what is new: tilt reference point, line bias,
 `spectrum` = mean of `spectrum_fine`, sampling recovery, `out_x`, propagated uncertainties.
 
-Swath edges: the transient at the ends reaches a few columns beyond `delta_x`
-(ox_experiments.md, section 3); overlapping swaths hide it.
+Swath edges: the outermost columns of the solution are unreliable, up to many times the
+flux on real data. They are returned as solved, not zeroed. `result['margin']` (=
+`info[4]`, also `charslit.edge_margin()` before the solve) is the number of columns per
+end not to use: the largest slit-image shift, rounded up, plus `SLITDEC_EDGE` = 2. Give
+them zero weight when merging swaths and drop them at the order ends. The constant covers
+the linear split; the untilted ox ripple reaches further (ox_experiments.md, section 3).
 
 ## Finding in slitdec.c: tilt evaluated half a subpixel off
 

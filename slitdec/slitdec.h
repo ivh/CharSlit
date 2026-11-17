@@ -15,6 +15,17 @@ typedef struct
 
 #define SLITDEC_OX_KMAX 15 /* highest derivative order of the penalties */
 
+/* Columns at either end of a swath solution that should not be used, counted beyond
+   the largest slit-image shift: they can be off by many times the flux. slitdec()
+   returns them as solved; give them zero weight when merging swaths. */
+#define SLITDEC_EDGE 2
+
+/* Number of such columns per end, as slitdec() reports in info[4]: the largest shift
+   from slitcurve (ncols x 6) and slitdeltas (osample * (nrows + 1) + 1), rounded up,
+   plus SLITDEC_EDGE. y_lower_lim < 0 means nrows / 2. */
+int slitdec_margin(int ncols, int nrows, const double *slitcurve, const double *slitdeltas,
+                   int osample, int y_lower_lim);
+
 /* The first 21 arguments are the historic slitdec() ones. Passing osample_x = 1,
    mu_x = NULL, nk_x = 0, mu_y = NULL, nk_y = 0, t_offset = 0, y_lower_lim = -1,
    sP_fine = NULL, unc_mode = 0, out_x = 1, nlag = 0, cov = NULL, chi2 = NULL for the rest

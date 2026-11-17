@@ -230,7 +230,7 @@ half-max FWHM, flux centroid, profile rms vs truth, bisector + BIS
   do we recover", not few-mpx claims.
 - slitdec evaluates tilt at t relative to the trace centre row
   (`y_lower_lim = nrows/2`); `cut_swath` returns slitcurve in that frame. The C
-  code zeroes the first/last `delta_x * osample_x` fine bins; with ~8 px sweep
+  code then zeroed the first/last `delta_x * osample_x` fine bins; with ~8 px sweep
   delta_x ~ 3 (binned), so ~6 fine bins at each edge are dead -- all 7 lines
   are well inside.
 

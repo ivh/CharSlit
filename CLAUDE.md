@@ -21,6 +21,15 @@ The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
   `'residual'` is 25 % low on tilted slits with the linear split or a weak penalty).
 - The `osamp_spec` branch (sampling recovery) is folded in; `lambda_fringe` is gone.
 - Known issue: kappa clipping re-enables zero-filled NaN pixels, parked in LATER.md.
+- **Swath edges are not zeroed any more** (Nov 2026). `spectrum`, `uncertainty` and
+  `spectrum_fine` come back as solved in every column; the edge columns can be many times
+  the flux. `result['margin']` = `info[4]` = largest slit-image shift (curvature and
+  slitdeltas, each on its own, rounded up) + `SLITDEC_EDGE` (2, slitdec.h) is the number of
+  columns per end a caller must not use; `charslit.edge_margin()` / C `slitdec_margin()`
+  give it before the solve, for laying out swaths. Callers use it verbatim, no +-1. The
+  internal `delta_x` (allocation, residual statistics, with the floor of 1 for a spectrum
+  penalty) is a different number. Same convention in cr2res (`CR2RES_EXTRACT_SWATH_EDGE`);
+  PyReduce still has to follow. Whether 2 is enough for the untilted ox ripple is open.
 - Docs: docs/slitdec_ox.md (reference), docs/ox_experiments.md (all measurements),
   docs/bisector_experiments.md (bisector primer, experiment designs); LATER.md holds
   the deferred work, first of all validating the opt-in modes on real frames; new tests in tests/test_ox.py.
@@ -235,7 +244,7 @@ The algorithm:
 
 ### info array and status codes
 
-`info = [success, sP_change, status, iter, delta_x]`. Status codes:
+`info = [success, sP_change, status, iter, margin]`. Status codes:
 - `1`: converged
 - `-1`: ran out of iterations (only when `iter` exceeds `maxiter`; converging exactly at `maxiter` counts as success)
 - `-2`: curvature too large (`nx > ncols`); the wrapper returns zeroed `model`/`unc` in this case
@@ -328,7 +337,8 @@ about:
   i.e. the old `nx = 4*delta_x+1` reached 69). After the geometry build,
   `bx` = max span over all pixels (at least 1 when `lambda_sP > 0`, which
   writes the first off-diagonal) and `nx = 2*bx+1`; `delta_x` still governs
-  allocation (`nx_alloc`), the edge zeroing and `info[4]`. Because `bx` is
+  allocation (`nx_alloc`) and the residual statistics (no edge zeroing any more, and
+  `info[4]` is the margin, see the top of this file). Because `bx` is
   the measured maximum, `rng <= bx` holds for every pixel, so the sP fill's
   key-search fallback is unreachable and was removed. Ported from PyReduce
   1dc9333c; bit-identical on all 12 golden cases but no measurable win on

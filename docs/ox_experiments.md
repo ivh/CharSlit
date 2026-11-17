@@ -69,8 +69,9 @@ and `model` weights agree to ±0.01.
 
 ## 3. Swath edges
 
-The first `delta_x` columns are zeroed, but the transient reaches further. Flat spectrum,
-200 × 136, relative error in the first kept columns:
+Measured when the solver still zeroed the first `delta_x` columns (the largest slit-image
+shift; it now returns them and reports a margin of that shift + 2 instead). The transient
+reaches further. Flat spectrum, 200 × 136, relative error in the columns from `delta_x` on:
 
 | shear | linear | ox 8, default |
 |---|---|---|
