@@ -9,8 +9,8 @@ from synth import box_int, fp_spec, make_swath
 NC, NR = 400, 136
 TR = slice(30, NC - 30)
 C1 = 8 / NR
-LINEAR = dict(osample_x=1, mu_x=[], t_offset=0.0)  # the defaults: historic slitdec
-OX8 = dict(osample_x=8, t_offset=0.5)              # recommended; mu_x defaults to the whitening penalty
+LINEAR = dict(osample_x=1, mu_x=[])  # the defaults: historic slitdec
+OX8 = dict(osample_x=8)             # recommended; mu_x defaults to the whitening penalty
 
 
 @pytest.fixture(scope="module")
@@ -42,14 +42,14 @@ def line_shift(fp, spec):
 
 @pytest.mark.parametrize("osample", [4, 8])
 def test_tilt_reference_point(fp_swath, osample):
-    """slitdec.c evaluates the tilt at the subpixel's lower edge: every line moves
-    by c1/(2*osample). Evaluating at the centre (default t_offset) removes it."""
+    """The historic slitdec.c evaluated the tilt at the subpixel's lower edge, which
+    moved every line by c1/(2*osample). At the centre the lines stay put."""
     fp, im, ycen, sc, _ = fp_swath
-    expected = C1 / (2 * osample)
-    old = line_shift(fp, extract(im, ycen, sc, osample=osample, **LINEAR)["spectrum"])
-    new = line_shift(fp, extract(im, ycen, sc, osample=osample, osample_x=16, t_offset=0.5)["spectrum"])
-    assert abs(abs(old) - expected) < 0.25 * expected
-    assert abs(new) < 0.25 * expected
+    old_bias = C1 / (2 * osample)
+    linear = line_shift(fp, extract(im, ycen, sc, osample=osample, **LINEAR)["spectrum"])
+    fine = line_shift(fp, extract(im, ycen, sc, osample=osample, osample_x=16)["spectrum"])
+    assert abs(linear) < 0.25 * old_bias
+    assert abs(fine) < 0.25 * old_bias
 
 
 def test_line_bias_vs_linear(fp_swath):
@@ -65,7 +65,7 @@ def test_line_bias_vs_linear(fp_swath):
 
 def test_spectrum_is_mean_of_fine(fp_swath):
     _, im, ycen, sc, _ = fp_swath
-    r = extract(im, ycen, sc, osample=8, osample_x=4, t_offset=0.5)
+    r = extract(im, ycen, sc, osample=8, osample_x=4)
     fine = r["spectrum_fine"].reshape(NC, 4).mean(axis=1)
     np.testing.assert_allclose(r["spectrum"], fine, rtol=1e-12, atol=1e-9)
 
@@ -79,7 +79,7 @@ def test_fine_spectrum_recovers_undersampled_lines():
     xf = np.arange(NC * ox) / ox - 0.5
     truth = 3000 * box_int(fp, xf, xf + 1 / ox) * ox
     core = slice(30 * ox, (NC - 30) * ox)
-    r = extract(im, ycen, sc, osample=8, osample_x=ox, mu_x=[0, 0, 1e-6], t_offset=0.5)
+    r = extract(im, ycen, sc, osample=8, osample_x=ox, mu_x=[0, 0, 1e-6])
     err = lambda v: np.sqrt(((v - truth)[core] ** 2).mean()) / truth[core].max()
     stair = np.repeat(extract(im, ycen, sc, osample=8, **LINEAR)["spectrum"], ox)
     assert err(r["spectrum_fine"]) < 0.02
@@ -105,7 +105,7 @@ class TestPropagatedUncertainty:
         m, ycen, sc, _ = make_swath(dict(kind="flat"), nc, nr, c1=4 / nr, nsub=8)
         rng = np.random.default_rng(7)
         out = {}
-        for name, kw in (("linear", LINEAR), ("weak", dict(osample_x=8, mu_x=[0, 0, 1e-6], t_offset=0.5))):
+        for name, kw in (("linear", LINEAR), ("weak", dict(osample_x=8, mu_x=[0, 0, 1e-6]))):
             runs = []
             for _ in range(40):
                 d = m + np.sqrt(m) * rng.standard_normal(m.shape)

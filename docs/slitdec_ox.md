@@ -4,12 +4,14 @@
 GPL-3.0 like the rest of CharSlit; its history is merged in), which he derived from our
 `slitdec.c` (c878d00). It came back in November 2026 as the one engine, under the old file
 and function names: the IDL REDUCE interface and the ctypes wrapper were removed,
-`lambda_sP` and `t_offset` made arguments, `weights='model'` brought up to 5e38be4
+`lambda_sP` made an argument, `weights='model'` brought up to 5e38be4
 (a·model + b), and `out_x` and the propagated uncertainties added. The C function
 `slitdec()` keeps its 21 historic arguments in the old order; the new ones follow.
 
-**The defaults are the historic slitdec**: `osample_x=1`, no `mu_x`, `t_offset=0`. A plain
-call is bit-identical to the code before, and everything below is opt-in.
+**The defaults are the historic slitdec**: `osample_x=1`, no `mu_x`. A plain call gives the
+old result except that the tilt is evaluated at the y-subpixel centre (see "Tilt reference
+point" below): untilted swaths are bit-identical, tilted ones shift by −c1/(2·osample).
+Everything below is opt-in.
 
 With `osample_x > 1` the spectrum is solved on that many fine bins per column. Each
 y-subpixel of the slit function, shifted by the curvature, contributes to a detector pixel
@@ -20,16 +22,13 @@ weights. `spectrum` stays on the detector grid (mean of the fine bins = what a v
 slit records); `spectrum_fine` is the fine solution.
 
 Recommended when the slit is tilted or lines are under-sampled:
-`charslit.slitdec(..., osample_x=8, t_offset=0.5)`.
+`charslit.slitdec(..., osample_x=8)`.
 
 New arguments of `charslit.slitdec`:
 - `osample_x=1`: fine bins per column.
 - `mu_x=None`: penalties on the 1st, 2nd, ... derivative of the spectrum. None means no
   penalty at `osample_x=1` and `(0, 0, 1.64e-4)` otherwise.
 - `mu_y=None`: the same for the slit function; None = `lambda_sL`.
-- `t_offset=0`: where along a y-subpixel the tilt is evaluated; 0.5 (the centre) is correct,
-  0 is the historic behaviour (see "Finding" below). Not the default, so that nothing
-  changes silently; science and calibration must use the same value.
 - `y_lower_lim=None`: trace row in the swath; None = nrows // 2.
 - `out_x=None`: n (dividing `osample_x`) adds `spectrum_out`, the spectrum on n bins per
   column (mean of adjacent fine bins, nested in the detector pixels).
@@ -124,15 +123,31 @@ end not to use: the largest slit-image shift, rounded up, plus `SLITDEC_EDGE` = 
 them zero weight when merging swaths and drop them at the order ends. The constant covers
 the linear split; the untilted ox ripple reaches further (ox_experiments.md, section 3).
 
-## Finding in slitdec.c: tilt evaluated half a subpixel off
+## Tilt reference point (fixed November 2026)
 
-slitdec.c evaluates the curvature at t = (lower edge of the y-subpixel) − ycen instead
-of the subpixel centre. Every line then shifts by c1/(2·osample): 3.7 mpx for c1 = 8/136
-at osample 8, scaling with 1/osample (`tests/test_ox.py`). It is smooth in
-x and calibrates out if science and calibration share osample and tilt, but it changes
-with osample and with any tilt difference (~5 m/s-equivalent for c1 ≈ 0.12 at osample 8 on
-ANDES). slitdec_ox evaluates at the centre (`t_offset=0.5`; 0 reproduces slitdec.c). The
-same one-line fix applies to slitdec.c on master.
+The historic slitdec.c, and cr2res (`cr2res_extract.c`, same loop), evaluate the curvature
+at t = (lower edge of the y-subpixel) − ycen instead of the subpixel centre. Every line
+then shifts by c1/(2·osample): 3.7 mpx for c1 = 8/136 at osample 8, scaling with
+1/osample. It is smooth in x and calibrates out if science and calibration share osample
+and tilt, but it changes with osample and with any tilt difference (~5 m/s-equivalent for
+c1 ≈ 0.12 at osample 8 on ANDES). The port first kept it as `t_offset=0` (default) with
+0.5 opt-in; now the centre is hard-wired and `t_offset` is gone, for every `osample_x`. `tests/test_ox.py::test_tilt_reference_point` checks that no shift is left.
+
+Regression goldens before and after (osample 6 for the real frames; spectrum shift fitted
+outside the margin, max differences relative to the spectrum peak):
+
+| case | median c1 | −c1/(2·osample) [mpx] | fitted shift [mpx] | max diff | after shift |
+|---|---|---|---|---|---|
+| ANDES_R_FP1 | +0.079 | −6.6 | −6.8 | 1.6e-3 | 9e-5 |
+| Rsim | +0.109 | −9.1 | −9.6 | 2.5e-3 | 4e-4 |
+| Hsim (c2 ≠ 0) | +0.060 | −5.0 | −6.8 | 3.7e-3 | 1.1e-3 |
+| CRIRES1 | −0.052 | +4.4 | +4.3 | 2.7e-3 | 3.1e-3 |
+| CRIRES2 (c2 ≠ 0) | −0.056 | +4.7 | +5.3 | 3.2e-3 | 1.8e-3 |
+| synthetic curved_slitdeltas (osample 4, 15 rows) | +0.010 | −1.3 | −2.1 | 1e-4 | 9e-5 |
+
+The untilted cases (simple, masked, CRIRES_UNE_J, discontinuous, fixedslope, multislope)
+are bit-identical. The remaining differences are the c2 term (the half-step also moves
+c2·t²) and, on CRIRES1/2, 2 and 6 pixels that kappa clipping now treats differently.
 
 ## Sampling recovery (the former `osamp_spec` branch)
 

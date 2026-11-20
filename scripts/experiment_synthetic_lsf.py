@@ -151,7 +151,7 @@ def extract(im, unc, ycen, slitcurve, slitdeltas, osample, s, mu3,
     r = charslit.slitdec(
         im, unc, np.ones(im.shape, dtype=np.uint8), ycen.copy(),
         slitcurve, slitdeltas, osample=osample, osample_x=s,
-        lambda_sP=lambda_sP, mu_x=mu_x_of(mu3), t_offset=0.5, kappa=0.0,
+        lambda_sP=lambda_sP, mu_x=mu_x_of(mu3), kappa=0.0,
     )
     if r["return_code"] != 0:
         return None, None

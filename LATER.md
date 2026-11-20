@@ -9,10 +9,10 @@ binning experiments; no real frame with real variances has gone through the new 
 defaults are the historic slitdec and are covered by the golden suite. To do, on frames
 where science and calibration are extracted identically:
 
-- **`osample_x=8, t_offset=0.5` with the default penalty.** Does the extraction noise drop
+- **`osample_x=8` with the default penalty.** Does the extraction noise drop
   as on the synthetics (variance 1.7-1.9× → 1.03 relative to a vertical slit for shears of
-  2 px and more)? Line shapes and wavelength solution against the historic extraction;
-  `t_offset=0.5` shifts every line by c1/(2·osample), so calibration frames must follow.
+  2 px and more)? Line shapes and wavelength solution against the historic extraction
+  (which also differs by the tilt-reference shift c1/(2·osample), now fixed in every mode).
   Run time and memory on full orders (4.5× per iteration on ANDES; no fast path for
   untilted frames above `osample_x=1`, the 2048 × 2048 no-curvature frame was never run).
 - **The weak penalty (`mu_x=(0, 0, 1e-6)`), reading `spectrum_fine` / `spectrum_out`.** Is

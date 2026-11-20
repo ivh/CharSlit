@@ -55,7 +55,7 @@ info = result['info']                  # [success, cost, status, iter, margin]
 margin = result['margin']              # columns at either end not to use (not zeroed)
 ```
 
-Optional (N. Piskunov's slitdec_ox): with `osample_x=8, t_offset=0.5` the spectrum is solved
+Optional (N. Piskunov's slitdec_ox): with `osample_x=8` the spectrum is solved
 on fine bins per column, which removes the excess noise and line-shape error of a tilted
 slit and can recover line shape below the pixel scale. Further arguments `mu_x`, `mu_y`,
 `out_x`, `uncertainty`; extra results `spectrum_fine`, `spectrum_out`, `covariance`, `chi2`.

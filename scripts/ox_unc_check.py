@@ -17,9 +17,9 @@ TR = slice(30, NC - 30)
 T2 = slice(60, 2 * NC - 60)
 rng = np.random.default_rng(3)
 noises = [rng.standard_normal((NR, NC)) for _ in range(NREAL)]
-SET = (("linear (master)", dict(osample_x=1, mu_x=[], t_offset=0.0)),
-       ("ox 8 default", dict(osample_x=8, t_offset=0.5)),
-       ("ox 8 mu3=1e-6", dict(osample_x=8, mu_x=[0, 0, 1e-6], t_offset=0.5)))
+SET = (("linear (master)", dict(osample_x=1, mu_x=[])),
+       ("ox 8 default", dict(osample_x=8)),
+       ("ox 8 mu3=1e-6", dict(osample_x=8, mu_x=[0, 0, 1e-6])))
 
 print(f"read noise {RN:g} e-, {NREAL} realisations")
 print(f"{'shear':>5} {'setting':16} {'weights':7} {'resid':>6} {'prop':>6} {'prop x2':>8} "

@@ -8,13 +8,12 @@ import charslit
 
 
 def slitdec_ox(im, pix_unc, ycen, slitcurve, **kw):
-    kw.setdefault("t_offset", 0.5)
     return charslit.slitdec(im, pix_unc, np.ones(im.shape, np.uint8), ycen, slitcurve,
                             np.zeros(im.shape[0]), **kw)
 
 
 def slitdec_orig(im, pix_unc, ycen, slitcurve, **kw):
-    return slitdec_ox(im, pix_unc, ycen, slitcurve, osample_x=1, mu_x=[], t_offset=0.0, **kw)
+    return slitdec_ox(im, pix_unc, ycen, slitcurve, osample_x=1, mu_x=[], **kw)
 
 NC, NR = 400, 136
 c1 = float(sys.argv[1]) / NR if len(sys.argv) > 1 else 8 / NR

@@ -32,7 +32,6 @@ nb::dict slitdec_wrapper(
     int osample_x,
     std::optional<std::vector<double>> mu_x_in,
     std::optional<std::vector<double>> mu_y,
-    double t_offset,
     std::optional<int> y_lower_lim,
     std::optional<int> out_x,
     std::string uncertainty,
@@ -245,7 +244,6 @@ nb::dict slitdec_wrapper(
         osample_x,
         mu_x.data(), static_cast<int>(mu_x.size()),
         muy.data(), static_cast<int>(muy.size()),
-        t_offset,
         y_lower_lim.has_value() ? *y_lower_lim : -1,
         sPf,
         unc_mode, cov_x, nlag, cov, &chi2
@@ -402,7 +400,6 @@ NB_MODULE(charslit, m) {
           nb::arg("osample_x") = 1,
           nb::arg("mu_x") = nb::none(),
           nb::arg("mu_y") = nb::none(),
-          nb::arg("t_offset") = 0.0,
           nb::arg("y_lower_lim") = nb::none(),
           nb::arg("out_x") = nb::none(),
           nb::arg("uncertainty") = "residual",
@@ -464,7 +461,7 @@ NB_MODULE(charslit, m) {
           "    column with the linear two-column split, the historic slitdec.\n"
           "    8 is the recommended value otherwise (docs/slitdec_ox.md): it removes\n"
           "    the line-shape error and, with the default mu_x, the excess noise\n"
-          "    of the linear split on a tilted slit. Use t_offset=0.5 with it.\n"
+          "    of the linear split on a tilted slit.\n"
           "mu_x : sequence of float, optional\n"
           "    Spectrum penalties on the 1st, 2nd, ... derivative in physical units:\n"
           "    transfer 1/(1 + sum mu_k nu^2k), nu in rad/px, independent of\n"
@@ -476,10 +473,6 @@ NB_MODULE(charslit, m) {
           "mu_y : sequence of float, optional\n"
           "    Slit-function penalties, same units. None (default): lambda_sL.\n"
           "    mu_y=(1e-2,) is the recommended start (docs/slitdec_ox.md).\n"
-          "t_offset : float, optional\n"
-          "    Where along a y-subpixel the curvature is evaluated: 0 (default,\n"
-          "    historic) the lower edge, which shifts every line by c1/(2*osample);\n"
-          "    0.5 the centre, which is correct.\n"
           "y_lower_lim : int, optional\n"
           "    Rows below the trace row in the swath (default None: nrows // 2).\n"
           "out_x : int, optional\n"
@@ -496,7 +489,9 @@ NB_MODULE(charslit, m) {
           "    chi^2 of the residuals, for pix_unc of unknown scale.\n"
           "nlag : int, optional\n"
           "    Number of lags in the returned covariance (default 2).\n\n"
-          "The defaults (osample_x=1, no mu_x, t_offset=0) are the historic slitdec.\n\n"
+          "The defaults (osample_x=1, no mu_x) are the historic slitdec, except that the\n"
+          "tilt is evaluated at the y-subpixel centre (the historic code used its lower\n"
+          "edge, shifting lines by c1/(2*osample)).\n\n"
           "Returns\n"
           "-------\n"
           "dict with keys:\n"

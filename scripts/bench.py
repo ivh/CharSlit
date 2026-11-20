@@ -1,7 +1,7 @@
 """Benchmark slitdec on the real data files. Usage: uv run python scripts/bench.py [nrepeat] [osample_x] [maxpix]
 
 osample_x (default 1) = 1 runs the defaults (historic slitdec); > 1 that oversampling
-with the default penalty and t_offset=0.5. maxpix skips larger frames.
+with the default penalty. maxpix skips larger frames.
 
 This times ONLY the charslit.slitdec C call (each case is loaded once, then the
 call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
@@ -50,7 +50,7 @@ import charslit
 NREPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 OSAMPLE_X = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 MAXPIX = int(float(sys.argv[3])) if len(sys.argv) > 3 else None
-OX_KW = {} if OSAMPLE_X == 1 else dict(osample_x=OSAMPLE_X, t_offset=0.5)
+OX_KW = {} if OSAMPLE_X == 1 else dict(osample_x=OSAMPLE_X)
 
 
 def load_case(fits_path):

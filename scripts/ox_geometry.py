@@ -36,7 +36,7 @@ def choose_osample_x(fwhm_min, eps=1e-4, c=0.025):
     return int(2 ** np.ceil(np.log2(max(ox, 1))))
 
 
-def subpixel_shifts(slitcurve_col, ycen_frac, nrows, osample, t_offset=0.5):
+def subpixel_shifts(slitcurve_col, ycen_frac, nrows, osample):
     """Shift of every y-subpixel of one column, and its height weight, in slitdec's
     convention (pixel y covers [y, y+1), centre at nrows//2 + ycen_frac)."""
     step = 1.0 / osample
@@ -47,7 +47,7 @@ def subpixel_shifts(slitcurve_col, ycen_frac, nrows, osample, t_offset=0.5):
     lower_c = np.clip(lower, 0, nrows); upper_c = np.clip(upper, 0, nrows)
     h = upper_c - lower_c
     keep = h > 0
-    t = (lower + t_offset * step - yc)[keep]
+    t = (lower + 0.5 * step - yc)[keep]
     c = np.zeros(6); c[:len(slitcurve_col)] = slitcurve_col
     s = sum(c[k] * t ** k for k in range(1, 6))
     return t, s, h[keep]

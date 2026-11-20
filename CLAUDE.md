@@ -6,16 +6,18 @@ This document contains important information about the CharSlit codebase, build 
 
 `slitdec/slitdec.c` is now N. Piskunov's slitdec_ox (merged from
 https://github.com/nikolai-piskunov/slitdec_ox, GPL-3.0), under the old file and function
-names. **The defaults are the historic slitdec** (`osample_x=1`, no `mu_x`, `t_offset=0`):
-a plain call is bit-identical to before, and `tests/test_regression.py` /
-`tests/test_slitdec.py` are the old files. Opt-in: `osample_x=8, t_offset=0.5` solves the
+names. **The defaults are the historic slitdec** (`osample_x=1`, no `mu_x`): a plain call
+is the old algorithm, and `tests/test_regression.py` / `tests/test_slitdec.py` are the old
+files. Opt-in: `osample_x=8` solves the
 spectrum on fine bins per column with box overlap and a penalty in physical units (`mu_x`,
 None = k=3 at 1.64e-4 when `osample_x > 1`); extra outputs `spectrum_fine`, `info_ox`.
 The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
 - Never `osample_x > 1` with `mu_x=[]` (exact null modes, no convergence). mu3 ≈ 1e-6 for
   sub-pixel lines at high S/N, the default penalty otherwise.
-- `t_offset=0` keeps the historic half-subpixel error of the tilt reference (lines shifted
-  by c1/(2·osample)); 0.5 is correct but opt-in, science and calibration must agree.
+- The tilt is evaluated at the y-subpixel centre, hard-wired (Nov 2026; `t_offset` is gone).
+  The historic slitdec.c and cr2res use the lower edge, which shifts lines by
+  c1/(2·osample); the goldens were regenerated with the fix (shifts in docs/slitdec_ox.md),
+  so results on tilted swaths differ from pre-fix extractions and from cr2res by that.
 - `out_x` returns the spectrum on a coarser sub-pixel grid; `uncertainty='propagated'|
   'scaled'` gives errors and covariances propagated through the solve (the default
   `'residual'` is 25 % low on tilted slits with the linear split or a weak penalty).

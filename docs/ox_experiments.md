@@ -7,10 +7,12 @@ sampling-recovery experiments: [bisector_experiments.md](bisector_experiments.md
 
 Unless stated otherwise: synthetic swaths (`tests/synth.py`, flat-topped slit, photon noise,
 flux 3000 per column), `osample=8`, `kappa=0`, joint slit-function/spectrum fit. "Linear"
-means `osample_x=1, mu_x=[], t_offset=0`, the historic `slitdec.c` and still what a plain
-call does. "Default" (or "ox 8, default") means `osample_x=8, t_offset=0.5` with the default
-penalty `mu_x=(0, 0, 1.64e-4)`; these were the function defaults while the experiments ran
-and were made opt-in afterwards. Nothing here is from real frames with real variances
+means `osample_x=1, mu_x=[], t_offset=0`, the historic `slitdec.c`. "Default" (or "ox 8,
+default") means `osample_x=8, t_offset=0.5` with the default penalty `mu_x=(0, 0, 1.64e-4)`;
+these were the function defaults while the experiments ran and were made opt-in afterwards.
+`t_offset` was later removed and the centre (0.5) hard-wired for all modes, so a plain call
+now is "linear" with `t_offset=0.5`; the measurements below were made with the stated
+value. Nothing here is from real frames with real variances
 except where a CRIRES+ or ANDES file is named.
 
 ## Summary
@@ -32,7 +34,7 @@ except where a CRIRES+ or ANDES file is named.
 7. **Residual-based uncertainties, and the Horne formula of cr2res PIPE-12658, are 25 % low**
    wherever the noise excess of point 2 is present. Propagating the pixel variances
    through the solve gives 1.02-1.03 everywhere and the right neighbour covariances.
-8. **Found along the way:** master evaluates the tilt half a subpixel off; outlier
+8. **Found along the way:** master evaluated the tilt half a subpixel off (now fixed); outlier
    rejection re-enables zero-filled NaN pixels ([../LATER.md](../LATER.md)).
 
 ## 1. Integration and regression
@@ -46,7 +48,7 @@ except where a CRIRES+ or ANDES file is named.
 - **Tilt reference point.** master evaluates the curvature at the lower edge of each
   y-subpixel. Measured line shift at osample 4 / 8 / 16: +7.85 / +4.20 / +2.40 mpx for the
   linear path against c1/(2·osample) = 7.35 / 3.68 / 1.84 (c1 = 8/136); the remaining
-  ~0.5 mpx is the linear split itself. With `t_offset=0.5` (default) and fine bins: 0.00.
+  ~0.5 mpx is the linear split itself. With `t_offset=0.5` and fine bins: 0.00.
 - **Line bias** on a noise-free FP comb (FWHM 4.5 px), rms/peak: linear 8.0e-3,
   `osample_x` 4 / 8 / 16: 4.8e-4 / 1.2e-4 / 2.7e-5.
 
