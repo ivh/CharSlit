@@ -22,7 +22,11 @@ The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
   'scaled'` gives errors and covariances propagated through the solve (the default
   `'residual'` is 25 % low on tilted slits with the linear split or a weak penalty).
 - The `osamp_spec` branch (sampling recovery) is folded in; `lambda_fringe` is gone.
-- Known issue: kappa clipping re-enables zero-filled NaN pixels, parked in LATER.md.
+- Pixels without data are passed as NaN with mask 0, never zero-filled: kappa clipping
+  re-decides every pixel, so a zero would come back wherever the model is faint and be
+  fitted as zero flux (CRIRES test frames: -0.8 % and -2.5 % median). A NaN never passes
+  the test, and every read of the image is gated by the mask. Masked pixels that hold a
+  value may come back on purpose (a BPM can be overzealous).
 - **Swath edges are not zeroed any more** (Nov 2026). `spectrum`, `uncertainty` and
   `spectrum_fine` come back as solved in every column; the edge columns can be many times
   the flux. `result['margin']` = `info[4]` = largest slit-image shift (curvature and

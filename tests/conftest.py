@@ -360,9 +360,8 @@ def real_data_files(request):
     mask = np.ones(im.shape, dtype=np.uint8)
     mask[nan_mask] = 0  # Mark NaN pixels as bad
 
-    # Replace NaN pixels with 0 for numerical stability
-    # (the mask will tell slitdec to ignore these pixels)
-    im[nan_mask] = 0.0
+    # NaN stays in: a zero-filled pixel would pass the kappa test where the
+    # model is faint and be fitted as zero flux
 
     if n_nans > 0:
         print(f"  {fits_path.name}: Found {n_nans} NaN pixels ({100*n_nans/im.size:.1f}%), marked as bad in mask")

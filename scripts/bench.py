@@ -93,7 +93,6 @@ def load_case(fits_path):
     nan_mask = np.isnan(im)
     mask = np.ones(im.shape, dtype=np.uint8)
     mask[nan_mask] = 0
-    im[nan_mask] = 0.0
     pix_unc = np.sqrt(np.abs(im) + 1.0)
     pix_unc[nan_mask] = 1e10
 

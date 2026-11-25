@@ -371,6 +371,28 @@ class TestNumericalBehavior:
                       uncertainty=result["uncertainty"],
                       mask_out=result["mask"])
 
+    @pytest.mark.parametrize("dataset", ["simple_image_data", "curved_image_data"])
+    def test_masked_nan_pixels_stay_out(self, dataset, request):
+        """A masked NaN pixel has no value, so kappa clipping must never bring it
+        back, and it must not reach the solution. (Masked pixels that hold a
+        value may come back: a BPM can be overzealous.)"""
+        data = request.getfixturevalue(dataset)
+        nrows, ncols = data["im"].shape
+        mask = data["mask"].copy()
+        mask[0, ::2] = 0
+        mask[-1, 1::2] = 0
+        mask[nrows // 2, ncols // 3] = 0
+        kw = {"osample": data["osample"]} if "osample" in data else {}
+
+        im = data["im"].copy()
+        im[mask == 0] = np.nan
+        r = charslit.slitdec(im, data["pix_unc"], mask, data["ycen"],
+                             data["slitcurve"], data["slitdeltas"], **kw)
+        assert not np.any(r["mask"][mask == 0]), "NaN pixel re-admitted"
+        assert np.all(np.isfinite(r["spectrum"]))
+        assert np.all(np.isfinite(r["uncertainty"]))
+        assert r["info"][2] != -3
+
     @pytest.mark.parametrize("osample", [1, 3, 4, 5, 10])
     @pytest.mark.parametrize("curved", [False, True], ids=["flat", "curved"])
     def test_ycen_on_subpixel_boundary(self, osample, curved):
