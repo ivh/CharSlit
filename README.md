@@ -75,25 +75,28 @@ damping ratio and nominal resolution [px] of the penalties in x and y.
 
 ## IDL REDUCE
 
-`libslitdec_ox_idl.so` exports `slit_func_ox`. All 24 arguments are required and there
+`libslitdec_ox_idl.so` exports `slit_func_ox`. All 27 arguments are required and there
 are no defaults, so every call states the parameters it uses (list in the header of
 `slitdec_ox_idl.c`):
 
 ```idl
 iret = CALL_EXTERNAL(lib, 'slit_func_ox', ncols, nrows, osample, osample_x, im, $
          ycen_frac, ycen_offset, y_lower_lim, PSF_curve, mu1_x, mu2_x, mu3_x, $
-         mu1_y, mu2_y, maxiter, kappa, sL_preset, mask, model, sP, sP_fine, sL, unc, info)
+         mu1_y, mu2_y, maxiter, kappa, weight_mode, gain, read_noise, sL_preset, $
+         mask, model, sP, sP_fine, sL, unc, info)
 ```
 
 Compared with REDUCE's `slit_func_2d`, `lambda_sP` and `lambda_sF` are replaced by the
 `mu` penalties, and `delta_x` (returned in `info[4]`), `sP_old` and the scratch arrays
-are gone. In `mkslitf.pro` the call is selected with a structure that must hold every
-parameter:
+are gone. `weight_mode = 1` gives optimal-extraction weights, with the variance
+model/gain + (read_noise/gain)² taken from the current model. In `mkslitf.pro` the call
+is selected with a structure that must hold every parameter (gain and read noise come
+from its `GAIN` and `READN` keywords):
 
 ```idl
 mkslitf, ..., SLITDEC_OX={LIBRARY:'/path/to/libslitdec_ox_idl.so', OSAMPLE_X:8L, $
                           MU1_X:0d, MU2_X:0d, MU3_X:1.64d-4, MU1_Y:1d-2, MU2_Y:0d, $
-                          MAXITER:100L, KAPPA:10d}
+                          MAXITER:100L, KAPPA:10d, WEIGHTS:0L}
 ```
 
 `idl_test_ox.pro` compares the library with an existing `reduce.so` on a swath

@@ -26,7 +26,7 @@ function sfox_reduce, lib, d, sp, sfsm, msk, sfbin
 end
 
 function sfox_call, lib, d, p, sp, sfsm, msk, sfbin, sp_fine, info
-  ; slit_func_ox with all 24 arguments; p holds the parameters
+  ; slit_func_ox with all 27 arguments; p holds the parameters
   nc = d.nc & nysf = d.nysf & osamp = d.osamp
   ny = (nysf + 1L) * osamp + 1L
   msk = d.msk
@@ -37,6 +37,7 @@ function sfox_call, lib, d, p, sp, sfsm, msk, sfbin, sp_fine, info
                        , long(d.y_lower_lim), double(d.PSF_curve) $
                        , double(p.mu1_x), double(p.mu2_x), double(p.mu3_x) $
                        , double(p.mu1_y), double(p.mu2_y), long(p.maxiter), double(p.kappa) $
+                       , long(p.weights), double(p.gain), double(p.read_noise) $
                        , long(0), msk, sfbin, sp, sp_fine, sfsm, unc, info)
 end
 
@@ -70,7 +71,8 @@ pro idl_test_ox, savfile, old_lib=old_lib, new_lib=new_lib
   sfox_report, 'reduce.so (lambda_sf='+strtrim(lambda_sf, 2)+')', d, sp0, sfbin0, msk0
 
   ; 2. slitdec_ox, recommended parameters
-  p = {osample_x:8L, mu1_x:0d, mu2_x:0d, mu3_x:1.64d-4, mu1_y:1d-2, mu2_y:0d, maxiter:100L, kappa:10d}
+  p = {osample_x:8L, mu1_x:0d, mu2_x:0d, mu3_x:1.64d-4, mu1_y:1d-2, mu2_y:0d, maxiter:100L, kappa:10d, $
+       weights:0L, gain:1d, read_noise:0d}
   r = sfox_call(new_lib, d, p, sp8, sfsm8, msk8, sfbin8, fine, info)
   print, 'return code', r
   sfox_report, 'slitdec_ox ox=8 mu3_x=1.64e-4 mu1_y=1e-2', d, sp8, sfbin8, msk8, ref=sp0
@@ -95,8 +97,16 @@ pro idl_test_ox, savfile, old_lib=old_lib, new_lib=new_lib
   r = sfox_call(new_lib, d, q, sp1, sfsm1, msk1, sfbin1, fine1, info1)
   sfox_report, 'slitdec_ox ox=1 mu_x=0 mu1_y=1.927e-3', d, sp1, sfbin1, msk1, ref=sp0
 
-  ; 5. wrong calls are refused with a message
+  ; 5. optimal-extraction weights: variance = model/gain + (read_noise/gain)^2
+  q = p & q.weights = 1L & q.gain = 2d & q.read_noise = 10d
+  r = sfox_call(new_lib, d, q, spw, sfsmw, mskw, sfbinw, finew, infow)
+  print, 'return code', r
+  sfox_report, 'slitdec_ox weights gain 2 RN 10', d, spw, sfbinw, mskw, ref=sp8
+
+  ; 6. wrong calls are refused with a message
   q = p & q.mu1_y = 0d
   print, 'mu1_y = mu2_y = 0: return code', sfox_call(new_lib, d, q, a, b, c, e, f, g)
+  q = p & q.weights = 1L & q.read_noise = 0d
+  print, 'weights without read noise: return code', sfox_call(new_lib, d, q, a, b, c, e, f, g)
   print, 'too few arguments: return code', CALL_EXTERNAL(new_lib, 'slit_func_ox', long(nc))
 end

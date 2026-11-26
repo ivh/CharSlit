@@ -66,8 +66,8 @@ def legacy_mu1_y(lib):
 
 
 def call(lib, ox=8, mux=(0.0, 0.0, 1.64e-4), muy=(1e-2, 0.0), maxiter=100, kappa=10.0,
-         t_offset=0.5, nargs=24):
-    """slit_func_ox with its 24 arguments. t_offset (tilt reference point) is not an
+         weights=0, gain=1.0, read_noise=0.0, t_offset=0.5, nargs=27):
+    """slit_func_ox with its 27 arguments. t_offset (tilt reference point) is not an
     argument; for testing it is set through the library global."""
     L = ct.CDLL(lib)
     ct.c_double.in_dll(L, "slitdec_ox_t_offset").value = t_offset
@@ -78,17 +78,18 @@ def call(lib, ox=8, mux=(0.0, 0.0, 1.64e-4), muy=(1e-2, 0.0), maxiter=100, kappa
          native(d["ycen_int"], np.int32), np.array(int(d["y_lower_lim"]), np.int32),
          native(d["psf_curve"], np.float64)]
     a += [np.array(v, np.float64) for v in tuple(mux) + tuple(muy)]
-    a += [np.array(maxiter, np.int32), np.array(kappa, np.float64), np.array(0, np.int32),
+    a += [np.array(maxiter, np.int32), np.array(kappa, np.float64), np.array(weights, np.int32),
+          np.array(gain, np.float64), np.array(read_noise, np.float64), np.array(0, np.int32),
           native(d["msk"], np.uint8), np.zeros((nysf, nc)), np.zeros(nc), np.zeros(nc * ox),
           np.zeros(ny), np.zeros(nc), np.zeros(11)]
     a = a[:nargs]
     argv = (ct.c_void_p * len(a))(*[x.ctypes.data for x in a])
     L.slit_func_ox.restype = ct.c_int
     rc = L.slit_func_ox(ct.c_int(len(a)), argv)
-    if nargs != 24:
+    if nargs != 27:
         return dict(rc=rc)
-    return dict(rc=rc, mask=a[17], model=a[18], sp=a[19], sp_fine=a[20], sL=a[21], unc=a[22],
-                info=a[23])
+    return dict(rc=rc, mask=a[20], model=a[21], sp=a[22], sp_fine=a[23], sL=a[24], unc=a[25],
+                info=a[26])
 
 
 def report(name, r, ref=None):
@@ -105,7 +106,9 @@ def report(name, r, ref=None):
 lib = os.path.join(here, "libslitdec_ox_idl.so")
 print(f"{sav}: nc={int(d['nc'])} nysf={int(d['nysf'])} osamp={int(d['osamp'])} "
       f"y_lower_lim={int(d['y_lower_lim'])} shear={np.median(d['psf_curve'][:, 1]):+.4f}")
-assert call(lib, nargs=23)["rc"] == -1, "wrong argument count accepted"
+assert call(lib, nargs=26)["rc"] == -1, "wrong argument count accepted"
+assert call(lib, weights=1, gain=2.0, read_noise=0.0)["rc"] == -1, "weights without read noise accepted"
+assert call(lib, weights=2)["rc"] == -1, "unknown weight_mode accepted"
 assert call(lib, mux=(0.0, -1.0, 0.0))["rc"] == -1, "negative mu accepted"
 assert call(lib, muy=(0.0, 0.0))["rc"] == -1, "no slit-function penalty accepted"
 r8 = call(lib, 8)
@@ -124,6 +127,24 @@ for m in (1e-3, 1e-1):
     report(f"slitdec_ox ox=8, mu1_y={m:g}", ry, r8)
     print(f"  info: damping y {ry['info'][9]:.3g}, resolution y {ry['info'][10]:.3f} px")
 report("slitdec_ox ox=1 mu_x=0 mu1_y=equiv t_offset=0", r1, r8)
+
+# weights: variance = model/gain + (RN/gain)^2. Same result as slitdec_ox2 with model
+# weights and noise_floor = RN^2/gain (pyslitdec_ox), and invariant to gain when RN
+# scales with it (only the ratio RN^2/gain matters).
+import pyslitdec_ox as P
+rw = call(lib, 8, weights=1, gain=2.0, read_noise=10.0)
+rw2 = call(lib, 8, weights=1, gain=8.0, read_noise=20.0)
+report("slitdec_ox ox=8 weights gain 2 RN 10", rw, r8)
+assert rw["rc"] == 0 and np.array_equal(rw["sp"], rw2["sp"]), "weights depend on more than RN^2/gain"
+im = native(d["sf"], np.float64)
+ycen = native(d["ycen_fract"], np.float64) + native(d["ycen_int"], np.int32)
+sc = np.zeros((int(d["nc"]), 6)); sc[:, 1:3] = native(d["psf_curve"], np.float64)[:, 1:3]
+rp = P.slitdec_ox(im, mask=native(d["msk"], np.uint8), ycen=ycen, slitcurve=sc,
+                  osample=int(d["osamp"]), osample_x=8, mu_x=(0.0, 0.0, 1.64e-4), mu_y=(1e-2,),
+                  maxiter=100, kappa=10.0, weights="model", noise_floor=50.0,
+                  y_lower_lim=int(d["y_lower_lim"]), sP0=None, lib=os.path.join(here, "libslitdec_ox.so"))
+print(f"  weighted slit_func_ox vs pyslitdec_ox model weights: max |dsP|/sP "
+      f"{np.max(np.abs(rw['sp'] - rp['spectrum'])[10:-10] / np.abs(rp['spectrum'][10:-10])):.2e}")
 for ref in refs:
     # the REDUCE library uses lambda_sf; slitdec_ox's equivalent penalty is mu1_y below
     rr = call_reduce(ref)

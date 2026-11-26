@@ -3,7 +3,7 @@
  *
  * Entry point: slit_func_ox. Every parameter is an argument: there are no
  * defaults and nothing is read from the environment, so a call shows exactly
- * which values were used. All 24 arguments are required; IDL long = C int.
+ * which values were used. All 27 arguments are required; IDL long = C int.
  *
  *   0  ncols       long   scalar            swath width in pixels
  *   1  nrows       long   scalar            swath height in pixels
@@ -24,15 +24,25 @@
  *  14  maxiter     long   scalar            maximum number of iterations, >= 1
  *  15  kappa       double scalar            outlier rejection threshold in sigma
  *                                             (<= 0: no rejection)
- *  16  sL_preset   long   scalar            non-zero: sL is given and held fixed
- *  17  mask        byte   [ncols,nrows]     in/out, 0 = bad (updated by the kappa clip)
- *  18  model       double [ncols,nrows]     OUTPUT model swath
- *  19  sP          double [ncols]           OUTPUT spectrum per detector pixel
- *  20  sP_fine     double [ncols*osample_x] OUTPUT fine spectrum
- *  21  sL          double [ny]              in/out slit function,
+ *  16  weight_mode long   scalar            0: unweighted least squares
+ *                                           1: optimal-extraction weights 1/variance with
+ *                                              variance = model/gain + (read_noise/gain)^2
+ *                                              [ADU^2], from the current model (not the
+ *                                              data) at every iteration; the first
+ *                                              iteration is unweighted
+ *  17  gain        double scalar            electrons per ADU (> 0; used when weighted)
+ *  18  read_noise  double scalar            read noise in electrons (> 0 when weighted:
+ *                                              it also keeps the weights finite where
+ *                                              the model is 0)
+ *  19  sL_preset   long   scalar            non-zero: sL is given and held fixed
+ *  20  mask        byte   [ncols,nrows]     in/out, 0 = bad (updated by the kappa clip)
+ *  21  model       double [ncols,nrows]     OUTPUT model swath
+ *  22  sP          double [ncols]           OUTPUT spectrum per detector pixel
+ *  23  sP_fine     double [ncols*osample_x] OUTPUT fine spectrum
+ *  24  sL          double [ny]              in/out slit function,
  *                                             ny = (nrows+1)*osample + 1
- *  22  unc         double [ncols]           OUTPUT spectrum uncertainty
- *  23  info        double [11]              OUTPUT: 0 success, 1 last sP change,
+ *  25  unc         double [ncols]           OUTPUT spectrum uncertainty
+ *  26  info        double [11]              OUTPUT: 0 success, 1 last sP change,
  *                                             2 status, 3 iterations, 4 delta_x (columns
  *                                             at each swath edge that are set to 0),
  *                                             5 dropped zeta entries, 6 sP band width,
@@ -52,7 +62,7 @@
 #include <math.h>
 #include "slitdec_ox.h"
 
-#define NARGS 24
+#define NARGS 27
 #define NINFO 11
 
 #ifdef BUILDING_REDUCE_WIN_DLL
@@ -69,8 +79,8 @@ static int bad(const char *what)
 
 int REDUCE_DLL slit_func_ox(int argc, void *argv[])
 {
-    int ncols, nrows, osample, osample_x, y_lower_lim, maxiter, sL_preset;
-    double mu_x[3], mu_y[2], kappa;
+    int ncols, nrows, osample, osample_x, y_lower_lim, maxiter, sL_preset, weight_mode;
+    double mu_x[3], mu_y[2], kappa, gain, read_noise;
     double *im, *ycen_frac, *PSF_curve, *model, *sP, *sP_fine, *sL, *unc, *info_out;
     int *ycen_offset;
     unsigned char *mask;
@@ -81,7 +91,8 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
     {
         printf("slit_func_ox: requires exactly %d arguments, got %d:\n", NARGS, argc);
         printf("  ncols, nrows, osample, osample_x, im, ycen_frac, ycen_offset, y_lower_lim,\n");
-        printf("  PSF_curve, mu1_x, mu2_x, mu3_x, mu1_y, mu2_y, maxiter, kappa, sL_preset,\n");
+        printf("  PSF_curve, mu1_x, mu2_x, mu3_x, mu1_y, mu2_y, maxiter, kappa,\n");
+        printf("  weight_mode, gain, read_noise, sL_preset,\n");
         printf("  mask, model, sP, sP_fine, sL, unc, info\n");
         return -1;
     }
@@ -101,14 +112,17 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
         mu_y[k] = *(double *)argv[12 + k];
     maxiter     = *(int *)argv[14];
     kappa       = *(double *)argv[15];
-    sL_preset   = *(int *)argv[16];
-    mask        = (unsigned char *)argv[17];
-    model       = (double *)argv[18];
-    sP          = (double *)argv[19];
-    sP_fine     = (double *)argv[20];
-    sL          = (double *)argv[21];
-    unc         = (double *)argv[22];
-    info_out    = (double *)argv[23];
+    weight_mode = *(int *)argv[16];
+    gain        = *(double *)argv[17];
+    read_noise  = *(double *)argv[18];
+    sL_preset   = *(int *)argv[19];
+    mask        = (unsigned char *)argv[20];
+    model       = (double *)argv[21];
+    sP          = (double *)argv[22];
+    sP_fine     = (double *)argv[23];
+    sL          = (double *)argv[24];
+    unc         = (double *)argv[25];
+    info_out    = (double *)argv[26];
 
     if (ncols < 1 || nrows < 1)
         return bad("ncols and nrows must be >= 1");
@@ -128,6 +142,12 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
         return bad("maxiter must be >= 1");
     if (!isfinite(kappa))
         return bad("kappa must be finite");
+    if (weight_mode != 0 && weight_mode != 1)
+        return bad("weight_mode must be 0 (none) or 1 (model variance)");
+    if (weight_mode == 1 && !(gain > 0.0 && isfinite(gain)))
+        return bad("gain must be > 0 with weight_mode 1");
+    if (weight_mode == 1 && !(read_noise > 0.0 && isfinite(read_noise)))
+        return bad("read_noise must be > 0 (electrons) with weight_mode 1");
 
     ny = osample * (nrows + 1) + 1;
 
@@ -136,7 +156,7 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
     double *ycen = malloc(ncols * sizeof(double));
     double *slitcurve = calloc((size_t)ncols * 6, sizeof(double));
     double *slitdeltas = calloc(ny, sizeof(double));
-    double *pix_unc = calloc((size_t)nrows * ncols, sizeof(double)); /* unused: weight_mode 0 */
+    double *pix_unc = calloc((size_t)nrows * ncols, sizeof(double)); /* unused here */
     if (!ycen || !slitcurve || !slitdeltas || !pix_unc)
     {
         free(ycen); free(slitcurve); free(slitdeltas); free(pix_unc);
@@ -165,13 +185,16 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
         sP[x] = norm > 0.0 ? sP[x] / norm : -1000.0;
     }
 
+    /* slitdec_ox2 weight_mode 2 uses w = 1/(model + noise_floor). With the model in ADU,
+       variance = model/gain + (read_noise/gain)^2 = (model + read_noise^2/gain)/gain;
+       the weights are normalised, so the common factor 1/gain drops out.           */
     info[4] = -11; /* ask for the extended info */
     ret = slitdec_ox2(ncols, nrows, im, pix_unc, mask, ycen, slitcurve, slitdeltas,
                       osample, osample_x, mu_x, 3, mu_y, 2,
                       0.0,       /* lambda_sL: not used, mu_y is the only sL penalty */
                       maxiter, kappa, sL_preset,
-                      0,         /* weight_mode: none */
-                      -1.0,      /* noise_floor: unused */
+                      weight_mode == 1 ? 2 : 0,
+                      weight_mode == 1 ? read_noise * read_noise / gain : -1.0,
                       sP, sP_fine, sL, model, unc, info, y_lower_lim);
 
     for (k = 0; k < NINFO; k++)

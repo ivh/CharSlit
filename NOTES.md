@@ -61,11 +61,14 @@ now). The same one-line fix applies to slitdec.c.
 
 ## IDL REDUCE interface (slitdec_ox_idl.c)
 
-`libslitdec_ox_idl.so` (built by `build.sh`) exports `slit_func_ox`: 24 arguments, all
+`libslitdec_ox_idl.so` (built by `build.sh`) exports `slit_func_ox`: 27 arguments, all
 required, no defaults, no environment variables (header of `slitdec_ox_idl.c`):
 ncols, nrows, osample, osample_x, im, ycen_frac, ycen_offset, y_lower_lim, PSF_curve,
-mu1_x, mu2_x, mu3_x, mu1_y, mu2_y, maxiter, kappa, sL_preset, mask, model, sP, sP_fine,
-sL, unc, info. Wrong argument count, negative mu, mu1_y = mu2_y = 0 (ill-posed sL: sP
+mu1_x, mu2_x, mu3_x, mu1_y, mu2_y, maxiter, kappa, weight_mode, gain, read_noise,
+sL_preset, mask, model, sP, sP_fine, sL, unc, info. weight_mode 1 = slitdec_ox2's model
+weights 1/(model + noise_floor) with noise_floor = read_noise^2/gain [ADU], i.e. variance
+model/gain + (RN/gain)^2 (weights are normalised, so only RN^2/gain matters; first
+iteration unweighted); gain > 0 and read_noise > 0 are required with it. Wrong argument count, negative mu, mu1_y = mu2_y = 0 (ill-posed sL: sP
 shifts by 1.6 % on test.sav), osample_x < 1 or maxiter < 1 return -1 with a message.
 Gone compared with REDUCE's slit_func_2d: lambda_sP and lambda_sF (replaced by mu_x,
 mu_y; lambda_sL is not reachable from IDL), delta_x (computed inside and returned in
@@ -116,6 +119,34 @@ historic model differs from reduce.so by 2.3e-3 rms.
   a few % in single pixels. Expected: the slit-function penalty acts on sub-pixel
   structure of sL, which the spectrum integrates over.
 
+**Slit tilt and curvature (Nov 2026, ~/Instruments/SALT-HRS/LFC/get_shear.pro).**
+REDUCE's get_shear keeps only lines >= 20 px apart and the 41 strongest per order, fits
+Gaussians in 15 px windows of a 5x5-median image and rejects lines whose tilt is small
+(its test compares the fit scatter with stddev(xcen)); with a 7 px LFC comb it keeps a
+cluster near the blaze peak and the poly=2 fit extrapolates to 3x the true tilt at the
+order ends. The rewrite (same call and outputs) cross-correlates every row with the
+central rows in 256-column blocks (rows tracked outward, no comb aliasing), fits
+s(dy) = c0 + c1 dy + c2 dy^2 per block and smooth 2D polynomials in column and order per
+fibre (FIBRES=2 for the 65 LFC traces), with a robust systematic error floor. LFC: c1
+-0.08 ... -0.16, c2 +0.0018 (even traces) / +0.0002 (odd); slicer steps leave 0.1 px rms
+mid-order, 0.2-0.5 px at the order ends. The sign of c2 is the one of slitdec_ox:
+rms(model - image) of LFC swaths is smallest at the measured c2. Science ThAr
+(DATA_2D/mbgphR202507100016, 32 orders): the old tilt was within 0.015, c2 ~ +0.0004.
+mkslitf.pro takes SLIT_CURV=curv_x (PSF_curve[2], slitdec_ox path only; getspec passes
+curv_x from the tilt file). On a science frame the new tilt changes sP by 1.6e-4
+(median), the curvature by 2.6e-4 (0.4 % at the 99th percentile) and moves deep lines by
+-0.03 px (sP refers to the trace row, box-extracted ThAr to the slit average). Neither
+changes the 20 % shallower cores of the deep telluric lines, so these are not caused by
+the tilt.
+
+**Weights (synthetic, Gaussian slit sigma 4 rows in 40, tilt -0.15, RN 5 e-, 30 noise
+realisations).** Model weights reach the optimal-extraction (Horne) limit: noise 0.0253
+vs 0.0248 at 2000 e- per column, 0.0877 vs 0.0874 at 300, 0.0060 vs 0.0058 at 30000;
+unweighted 0.0264 / 0.0885 / 0.0065 (6-12 % worse, most at high flux). Bias < 1e-3 for
+both. With weights the chi^2 curvature varies along x as 1/flux while the penalty uses
+the swath median, so line cores get a slightly weaker filter (harmless); a local
+normalisation would keep R(nu) exact everywhere.
+
 ## Penalties: mu_k in x and y (penalty_design.py, sl_penalty_study.py)
 
 `slitdec_ox2` takes `mu_x[k-1]`, `mu_y[k-1]` (k = 1..15): penalty
@@ -154,8 +185,10 @@ objective next step.
 
 - Real frames: the ANDES flat/FP in `~/ANDES/E2E/fp_slitAB` are not on this machine.
 - CRIRES+ through IDL REDUCE: tested in IDL on one saved swath (test.sav); full mkslitf runs on CRIRES+ frames not done.
-- SALT-HRS line cores (above): test one order with osample_x 1 / 8 and mu_x 0 to separate
-  the model from the penalty; improve get_shear.pro and repeat.
+- SALT-HRS line cores (above): not the tilt or curvature; test one order with osample_x
+  1 / 8 and mu_x 0 to separate the model from the penalty.
+- Slicer steps: per-row offsets (slitdeltas in slitdec_ox2) are not passed from IDL yet;
+  get_shear returns them (ROW_OFFSETS) per block.
 - mkslitf.pro: the first and last swath of an order copy the delta_x edge columns that
   slitdec_ox sets to 0 (blz starts/ends with zeros, as with reduce.so).
 - Memory: the zeta list holds ≈ (osample+1)(osample_x+1) entries per pixel
