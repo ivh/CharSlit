@@ -112,9 +112,16 @@ historic model differs from reduce.so by 2.3e-3 rms.
   0.37 x at Nyquist: point-to-point scatter 0.67 x.
 - Deep narrow lines (telluric O2 band in order 17, 21 of 21 frames): line cores up to
   20 % shallower than reduce.so at equal equivalent width (to 0.2 %), i.e. the new
-  profile is blunter. Not explained by mu3_x (transfer 1 - 2e-4 at 1 rad/px). Which is
-  right is open: candidates are the reduce.so line bias and an inaccurate slit tilt
-  (get_shear), which the exact overlap model does not average away.
+  profile is blunter. Not explained by mu3_x (transfer 1 - 2e-4 at 1 rad/px).
+  Resolved (26-Nov-26, ~/Instruments/SALT-HRS/Simulator): reduce.so is wrong. A simulated
+  frame with the measured tilt, curvature, three-slice profile, slicer steps (ThAr row
+  offsets) and inter-order background gives the same numbers as the real frames: in order 17
+  ox/reduce core depth 0.985 (real 0.984), residual core flux 1.139, at most 1.19
+  (real 1.143, at most 1.205), EW 0.998 (real 0.9985). slitdec_ox recovers the
+  input cores exactly; reduce.so's two-column split of each subpixel (osample_x = 1)
+  makes lines 1.6 % deeper per unit depth. slitdec_ox with osample_x = 1 does the same, so
+  the cause is the split, not the penalties. Slicer steps and background change neither
+  ratio.
 - mu1_y: 1e-2 against legacy lambda_sf = 2 (~2e-3) changes sP by 3e-4 median, at most
   a few % in single pixels. Expected: the slit-function penalty acts on sub-pixel
   structure of sL, which the spectrum integrates over.
@@ -185,10 +192,9 @@ objective next step.
 
 - Real frames: the ANDES flat/FP in `~/ANDES/E2E/fp_slitAB` are not on this machine.
 - CRIRES+ through IDL REDUCE: tested in IDL on one saved swath (test.sav); full mkslitf runs on CRIRES+ frames not done.
-- SALT-HRS line cores (above): not the tilt or curvature; test one order with osample_x
-  1 / 8 and mu_x 0 to separate the model from the penalty.
 - Slicer steps: per-row offsets (slitdeltas in slitdec_ox2) are not passed from IDL yet;
-  get_shear returns them (ROW_OFFSETS) per block.
+  get_shear returns them (ROW_OFFSETS) per block. In simulation the SALT-HRS steps
+  (0.3 px peak to peak) shift slitdec_ox lines by only +0.005 px when not modelled.
 - mkslitf.pro: the first and last swath of an order copy the delta_x edge columns that
   slitdec_ox sets to 0 (blz starts/ends with zeros, as with reduce.so). Since 26-Nov-26
   delta_x comes from the tilt only: slitdec forced delta_x = 1 whenever the spectrum was
