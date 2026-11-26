@@ -157,6 +157,21 @@ class TestPropagatedUncertainty:
         with pytest.raises(RuntimeError):
             charslit.slitdec(*a, uncertainty="horne")
 
+    def test_empty_column_is_nan(self, fp_swath):
+        """A column without data has no error, not a zero one; the rest is unchanged.
+        Masked wider than the tilt, so that no pixel draws on the middle column."""
+        _, im, ycen, sc, _ = fp_swath
+        unc = np.sqrt(np.abs(im) + 1)
+        mask = np.ones(im.shape, np.uint8)
+        mask[:, NC // 2 - 10 : NC // 2 + 11] = 0
+        a = (im, unc, mask, ycen, sc, np.zeros(NR))
+        far = np.r_[TR.start : NC // 2 - 20, NC // 2 + 21 : TR.stop]
+        for extra in (LINEAR, dict(OX8, out_x=2, nlag=2)):
+            r = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", **extra)
+            assert np.isnan(r["uncertainty"][NC // 2])
+            assert np.isfinite(r["uncertainty"][far]).all()
+            if "covariance" in r:
+                assert np.isnan(r["covariance"][2 * (NC // 2) : 2 * (NC // 2) + 2]).all()
 
 def test_defaults_are_historic(fp_swath):
     """A plain call is the linear split; osample_x > 1 alone gets the whitening penalty."""

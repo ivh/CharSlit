@@ -103,10 +103,30 @@ Validation (ox_experiments.md, section 9): reported σ / empirical scatter is 1.
 all cases, including those where `'residual'` gives 0.73-0.77, and the predicted lag-1
 correlations match the measured ones to 0.01. Cost +2-3 % of the run time.
 
+Real data (November 2026, `osample_x=1`, ported to cr2res and used by PyReduce): two
+independent halves of a nodding sequence extracted separately, the scatter of their
+difference against the reported σ (1 = right, > 1 = σ too small), median over orders:
+
+| data | residual / Horne | propagated |
+|---|---|---|
+| CRIRES+ M4368, 200 × 20 s, thermal background dominates | Horne 1.04, flux-free orders 1.2-1.9 | 0.97 (flux-free 0.85-0.99) |
+| CRIRES+ Y1029, 32 × 120 s, source dominates | Horne 1.36 | 1.13 |
+| SOXS NIR nod, two A-B pairs (PyReduce) | | 1.27 with pix_unc from the A-B image, 1.00 with (A+B)/g + 2 RN²/g² |
+
+The propagation itself holds on real data; the misses are in V. Per-column formulas (Horne,
+residual) fail where the star dominates the variance and on tilted orders (Horne/propagated
+1.11 untilted to 1.26 at the largest tilt in Y). In CRIRES+ Y the remaining 13 % is the
+pipeline's photon-noise term; on the SOXS A-B frames pix_unc built from the difference image
+lacked the sky and the second read noise. So pix_unc must be the variance of the data
+passed in, not rebuilt from it. Details: cr2re-pipe `PIPE-12658_more_errorprop`, PyReduce
+7851f7b.
+
 Limits: the slit function is taken as known; the number is the noise of the regularised
 estimate and says nothing about smoothing bias; and it is only as good as V. Use `'scaled'`
 or check `chi2` when pix_unc is not a real variance. Input-masked pixels that the outlier
-rejection re-enables enter with their pix_unc, see [../LATER.md](../LATER.md).
+rejection re-enables enter with their pix_unc, see [../LATER.md](../LATER.md). A column
+that no unmasked pixel contributes to gets NaN in `uncertainty` and `covariance` (it would
+otherwise come out as the leakage through the penalty, near 0).
 
 ## Regression and tests
 
@@ -203,5 +223,6 @@ objective next step.
   (≈ 90 MB for a 500 × 136 swath at 8/8; the list length is now counted exactly).
 - Speed: no flat fast path for osample_x > 1; 5× (ox 8) to 10× (ox 16) slower than
   slitdec.c on a tilted swath.
-- The default uncertainty is still the residual-based one; `'propagated'` has not been
-  checked on real frames with real variances, nor with a varying slit function.
+- The default uncertainty is still the residual-based one. `'propagated'` has been checked
+  on real CRIRES+ and SOXS nodding data at `osample_x=1` (see "Uncertainties"), not yet
+  at `osample_x > 1` nor with a slit function that varies along the swath.

@@ -19,10 +19,10 @@ where science and calibration are extracted identically:
   sub-pixel line shape recovered on genuinely under-sampled data (ESPRESSO-class), and how
   much does the bisector depend on the line's sub-pixel position? Choice of `out_x`
   (2 for FWHM ≈ 1.8 px, 4 below a pixel on the synthetics).
-- **`uncertainty='propagated'` / `'scaled'`.** Reported σ and neighbour covariances against
-  the scatter between repeated exposures; how far `chi2` is from 1 with real pix_unc
-  (3-95 with the test fixture's √(|im|+1)); frames where pix_unc is known not to describe
-  the noise (CRIRES+ L/M nodding).
+- **`uncertainty='propagated'` / `'scaled'`.** σ against the scatter between repeated
+  exposures is done for `osample_x=1` on CRIRES+ M/Y and SOXS NIR nodding (2026-11-26,
+  docs/slitdec_ox.md "Uncertainties"): right when pix_unc is the true variance. Still open:
+  neighbour covariances and `chi2` on real frames, and `osample_x > 1` on real data.
 - **What the synthetics cannot show:** a slit function that varies along the dispersion,
   line shapes that vary along the slit (fibre-chord rows, the case behind `weights=`), and
   the slit-function error that the propagated uncertainty ignores.
