@@ -848,7 +848,10 @@ int slitdec_ox2(    int ncols,
     if (ky > 2 * osample) /* the sL band holds differences up to 2 * osample */
         ky = 2 * osample;
 
-    delta_x = kx == 0 ? 0 : 1;
+    /* Edge columns lost to the tilt only. slitdec needed delta_x >= 1 for its spectrum
+       smoothing; here the sP band is sized for the penalty separately (bx below), so a
+       vertical slit keeps every column. */
+    delta_x = 0;
     for (x = 0; x < ncols; x++)
     {
         if (slitcurve[curve_index(x, 1)] == 0.e0 && slitcurve[curve_index(x, 2)] == 0.e0 &&

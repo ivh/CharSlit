@@ -190,7 +190,12 @@ objective next step.
 - Slicer steps: per-row offsets (slitdeltas in slitdec_ox2) are not passed from IDL yet;
   get_shear returns them (ROW_OFFSETS) per block.
 - mkslitf.pro: the first and last swath of an order copy the delta_x edge columns that
-  slitdec_ox sets to 0 (blz starts/ends with zeros, as with reduce.so).
+  slitdec_ox sets to 0 (blz starts/ends with zeros, as with reduce.so). Since 26-Nov-26
+  delta_x comes from the tilt only: slitdec forced delta_x = 1 whenever the spectrum was
+  smoothed, slitdec_ox inherited it (kx > 0), but its sP band is sized for the penalty
+  separately. With a vertical slit every order now keeps its first and last column
+  (HARPS simulator: all 71 orders had 0 at both ends). A tilted slit still loses
+  delta_x columns at the order ends, as in REDUCE.
 - Memory: the zeta list holds ≈ (osample+1)(osample_x+1) entries per pixel
   (≈ 90 MB for a 500 × 136 swath at 8/8; the list length is now counted exactly).
 - Speed: no flat fast path for osample_x > 1; 5× (ox 8) to 10× (ox 16) slower than
