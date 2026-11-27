@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate synthetic test data for CharSlit extraction testing.
+Generate synthetic test data for SlitDec extraction testing.
 
 This script creates various FITS files with Gaussian peaks that have different
 characteristics (shifted, unshifted, discontinuous shifts, multislope, etc.)

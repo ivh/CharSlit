@@ -3,7 +3,7 @@
 Convert CR2RES trace wave table FITS files to curvedelta NPZ format.
 
 CR2RES trace tables contain slit curvature polynomials for each order/trace.
-This script extracts them and converts to the format used by CharSlit:
+This script extracts them and converts to the format used by SlitDec:
 - slitcurve: interpolated polynomial coefficients (ncols, 3)
 - slitdeltas: per-row offsets (set to zeros)
 - ycen: center y position for each column

@@ -1,5 +1,5 @@
 /*
- * IDL CALL_EXTERNAL interface for slitdec_ox (REDUCE).
+ * IDL CALL_EXTERNAL interface for slitdec (../slitdec/slitdec.c) in REDUCE.
  *
  * Entry point: slit_func_ox. Every parameter is an argument: there are no
  * defaults and nothing is read from the environment, so a call shows exactly
@@ -29,7 +29,11 @@
  *                                              variance = model/gain + (read_noise/gain)^2
  *                                              [ADU^2], from the current model (not the
  *                                              data) at every iteration; the first
- *                                              iteration is unweighted
+ *                                              iteration is unweighted. Passed to
+ *                                              slitdec as model weights with pix_unc^2 =
+ *                                              max(im,0)/gain + (read_noise/gain)^2 and
+ *                                              the intercept fixed at (read_noise/gain)^2,
+ *                                              so slitdec fits only the slope (~1/gain)
  *  17  gain        double scalar            electrons per ADU (> 0; used when weighted)
  *  18  read_noise  double scalar            read noise in electrons (> 0 when weighted:
  *                                              it also keeps the weights finite where
@@ -44,14 +48,16 @@
  *  25  unc         double [ncols]           OUTPUT spectrum uncertainty
  *  26  info        double [11]              OUTPUT: 0 success, 1 last sP change,
  *                                             2 status, 3 iterations, 4 delta_x (columns
- *                                             at each swath edge that are set to 0),
+ *                                             at each swath edge that are set to 0: the
+ *                                             largest slit-image shift; slitdec's own
+ *                                             margin is SLITDEC_EDGE more),
  *                                             5 dropped zeta entries, 6 sP band width,
  *                                             7 damping ratio x, 8 resolution x [px],
  *                                             9 damping ratio y, 10 resolution y [px]
  *                                             (damping < 1: the penalty can ring)
  *
  * Returns 0 on success, -1 on a wrong argument (a message is printed), otherwise
- * the return value of slitdec_ox2.
+ * the return value of slitdec().
  *
  * Memory layout: IDL [ncols,nrows] is column-major, i.e. C [nrows][ncols], so the
  * flat index y*ncols + x is the same on both sides and no copy is needed.
@@ -60,7 +66,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include "slitdec_ox.h"
+#include "slitdec.h"
 
 #define NARGS 27
 #define NINFO 11
@@ -151,12 +157,12 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
 
     ny = osample * (nrows + 1) + 1;
 
-    /* slitdec_ox takes the full trace position and splits it itself;
+    /* slitdec takes the full trace position and splits it itself;
        it overwrites this copy with the fractional part.                    */
     double *ycen = malloc(ncols * sizeof(double));
     double *slitcurve = calloc((size_t)ncols * 6, sizeof(double));
     double *slitdeltas = calloc(ny, sizeof(double));
-    double *pix_unc = calloc((size_t)nrows * ncols, sizeof(double)); /* unused here */
+    double *pix_unc = calloc((size_t)nrows * ncols, sizeof(double)); /* weight_mode 1 only */
     if (!ycen || !slitcurve || !slitdeltas || !pix_unc)
     {
         free(ycen); free(slitcurve); free(slitdeltas); free(pix_unc);
@@ -185,17 +191,43 @@ int REDUCE_DLL slit_func_ox(int argc, void *argv[])
         sP[x] = norm > 0.0 ? sP[x] / norm : -1000.0;
     }
 
-    /* slitdec_ox2 weight_mode 2 uses w = 1/(model + noise_floor). With the model in ADU,
-       variance = model/gain + (read_noise/gain)^2 = (model + read_noise^2/gain)/gain;
-       the weights are normalised, so the common factor 1/gain drops out.           */
+    /* slitdec's model weights are 1/(a*model + b) with a and b fitted to pix_unc^2
+       against the model. A zero pix_unc would give a = 0, i.e. silently unweighted.
+       pix_unc^2 from the data is the variance the model weights should reproduce;
+       b is fixed to the read-noise term, so only a (~1/gain) is fitted.          */
+    double b_rn = 0.0;
+    if (weight_mode == 1)
+    {
+        b_rn = (read_noise / gain) * (read_noise / gain);
+        for (long i = 0; i < (long)nrows * ncols; i++)
+            pix_unc[i] = sqrt(fmax(im[i], 0.0) / gain + b_rn);
+    }
+
     info[4] = -11; /* ask for the extended info */
-    ret = slitdec_ox2(ncols, nrows, im, pix_unc, mask, ycen, slitcurve, slitdeltas,
-                      osample, osample_x, mu_x, 3, mu_y, 2,
-                      0.0,       /* lambda_sL: not used, mu_y is the only sL penalty */
-                      maxiter, kappa, sL_preset,
-                      weight_mode == 1 ? 2 : 0,
-                      weight_mode == 1 ? read_noise * read_noise / gain : -1.0,
-                      sP, sP_fine, sL, model, unc, info, y_lower_lim);
+    ret = slitdec(ncols, nrows, im, pix_unc, mask, ycen, slitcurve, slitdeltas, osample,
+                  0.0,        /* lambda_sP: mu_x is the only spectrum penalty */
+                  0.0,        /* lambda_sL: not used, mu_y is the only sL penalty */
+                  maxiter, kappa, sL_preset,
+                  weight_mode == 1 ? 2 : 0,
+                  weight_mode == 1 ? b_rn : -1.0,
+                  sP, sL, model, unc, info,
+                  osample_x, mu_x, 3, mu_y, 2, y_lower_lim, sP_fine,
+                  0, 1, 0, NULL, NULL);
+
+    /* slitdec returns the swath ends as solved and reports a margin. REDUCE (mkslitf.pro)
+       expects the columns within the largest slit-image shift set to 0 and that shift in
+       info[4], as slitdec_ox and slit_func_2d did.                                  */
+    {
+        const int edge = (int)info[4] - SLITDEC_EDGE;
+        for (x = 0; x < ncols; x++)
+            if (x < edge || x >= ncols - edge)
+            {
+                sP[x] = unc[x] = 0.0;
+                for (k = 0; k < osample_x; k++)
+                    sP_fine[x * osample_x + k] = 0.0;
+            }
+        info[4] = edge;
+    }
 
     for (k = 0; k < NINFO; k++)
         info_out[k] = info[k];

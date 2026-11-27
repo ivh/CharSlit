@@ -42,7 +42,7 @@ def call_reduce(lib):
 
 
 def legacy_mu1_y(lib):
-    """mu1_y equivalent to REDUCE's lambda_sf on this swath, from slitdec_ox2 (exported
+    """mu1_y equivalent to REDUCE's lambda_sf on this swath, from slitdec() (exported
     by the same library) run with the legacy lambda_sL penalty."""
     L = ct.CDLL(lib)
     nc, nr, os_ = int(d["nc"]), int(d["nysf"]), int(d["osamp"])
@@ -51,26 +51,24 @@ def legacy_mu1_y(lib):
     ycen = native(d["ycen_fract"], np.float64) + native(d["ycen_int"], np.int32)
     sc = np.zeros((nc, 6)); sc[:, 1:3] = native(d["psf_curve"], np.float64)[:, 1:3]
     mux = np.zeros(3); info = np.zeros(11); info[4] = -11
-    out = [np.zeros(nc), np.zeros(nc), np.zeros(ny), np.zeros((nr, nc)), np.zeros(nc)]
-    sp0 = out[0]
-    sp0[:] = np.abs(im * native(d["msk"], np.uint8)).sum(0)
+    sp, sl, model, unc = np.zeros(nc), np.zeros(ny), np.zeros((nr, nc)), np.zeros(nc)
+    sp[:] = np.abs(im * native(d["msk"], np.uint8)).sum(0)
     P, I, D = ct.POINTER(ct.c_double), ct.c_int, ct.c_double
     ptr = lambda a: a.ctypes.data_as(P)
-    L.slitdec_ox2.restype = I
-    L.slitdec_ox2(I(nc), I(nr), ptr(im), ptr(np.zeros((nr, nc))),
-                  native(d["msk"], np.uint8).ctypes.data_as(ct.POINTER(ct.c_ubyte)),
-                  ptr(ycen), ptr(sc), ptr(np.zeros(ny)), I(os_), I(1), ptr(mux), I(3), None, I(0),
-                  D(float(d["lambda_sf"])), I(100), D(10.0), I(0), I(0), D(-1.0),
-                  *[ptr(a) for a in out], ptr(info), I(int(d["y_lower_lim"])))
+    L.slitdec.restype = I
+    L.slitdec(I(nc), I(nr), ptr(im), ptr(np.zeros((nr, nc))),
+              native(d["msk"], np.uint8).ctypes.data_as(ct.POINTER(ct.c_ubyte)),
+              ptr(ycen), ptr(sc), ptr(np.zeros(ny)), I(os_), D(0.0), D(float(d["lambda_sf"])),
+              I(100), D(10.0), I(0), I(0), D(-1.0), ptr(sp), ptr(sl), ptr(model), ptr(unc),
+              ptr(info), I(1), ptr(mux), I(3), None, I(0), I(int(d["y_lower_lim"])), None,
+              I(0), I(1), I(0), None, None)
     return -info[9]
 
 
 def call(lib, ox=8, mux=(0.0, 0.0, 1.64e-4), muy=(1e-2, 0.0), maxiter=100, kappa=10.0,
-         weights=0, gain=1.0, read_noise=0.0, t_offset=0.5, nargs=27):
-    """slit_func_ox with its 27 arguments. t_offset (tilt reference point) is not an
-    argument; for testing it is set through the library global."""
+         weights=0, gain=1.0, read_noise=0.0, nargs=27):
+    """slit_func_ox with its 27 arguments."""
     L = ct.CDLL(lib)
-    ct.c_double.in_dll(L, "slitdec_ox_t_offset").value = t_offset
     nc, nysf, osamp = int(d["nc"]), int(d["nysf"]), int(d["osamp"])
     ny = (nysf + 1) * osamp + 1
     a = [np.array(nc, np.int32), np.array(nysf, np.int32), np.array(osamp, np.int32),
@@ -115,7 +113,7 @@ r8 = call(lib, 8)
 r16 = call(lib, 16)
 mu1_eq = legacy_mu1_y(lib)
 print(f"lambda_sf = {float(d['lambda_sf'])} is mu1_y = {mu1_eq:.4g} on this swath")
-r1 = call(lib, 1, (0.0, 0.0, 0.0), muy=(mu1_eq, 0.0), t_offset=0.0)
+r1 = call(lib, 1, (0.0, 0.0, 0.0), muy=(mu1_eq, 0.0))
 assert r8["rc"] == 0
 assert np.allclose(r8["sp_fine"].reshape(-1, 8).mean(1)[5:-5], r8["sp"][5:-5]), "sP != mean(sP_fine)"
 report("slitdec_ox ox=8 mu3_x=1.64e-4 mu1_y=1e-2", r8)
@@ -126,12 +124,13 @@ for m in (1e-3, 1e-1):
     ry = call(lib, 8, muy=(m, 0.0))
     report(f"slitdec_ox ox=8, mu1_y={m:g}", ry, r8)
     print(f"  info: damping y {ry['info'][9]:.3g}, resolution y {ry['info'][10]:.3f} px")
-report("slitdec_ox ox=1 mu_x=0 mu1_y=equiv t_offset=0", r1, r8)
+report("slitdec_ox ox=1 mu_x=0 mu1_y=equiv", r1, r8)
 
-# weights: variance = model/gain + (RN/gain)^2. Same result as slitdec_ox2 with model
-# weights and noise_floor = RN^2/gain (pyslitdec_ox), and invariant to gain when RN
-# scales with it (only the ratio RN^2/gain matters).
-import pyslitdec_ox as P
+# weights: variance = model/gain + (RN/gain)^2, invariant to gain when RN scales with it
+# (only the ratio RN^2/gain matters). Same as charslit's model weights with the
+# pix_unc the wrapper builds and noise_floor = (RN/gain)^2.
+sys.path.insert(0, os.path.join(here, ".."))
+import charslit
 rw = call(lib, 8, weights=1, gain=2.0, read_noise=10.0)
 rw2 = call(lib, 8, weights=1, gain=8.0, read_noise=20.0)
 report("slitdec_ox ox=8 weights gain 2 RN 10", rw, r8)
@@ -139,16 +138,19 @@ assert rw["rc"] == 0 and np.array_equal(rw["sp"], rw2["sp"]), "weights depend on
 im = native(d["sf"], np.float64)
 ycen = native(d["ycen_fract"], np.float64) + native(d["ycen_int"], np.int32)
 sc = np.zeros((int(d["nc"]), 6)); sc[:, 1:3] = native(d["psf_curve"], np.float64)[:, 1:3]
-rp = P.slitdec_ox(im, mask=native(d["msk"], np.uint8), ycen=ycen, slitcurve=sc,
-                  osample=int(d["osamp"]), osample_x=8, mu_x=(0.0, 0.0, 1.64e-4), mu_y=(1e-2,),
-                  maxiter=100, kappa=10.0, weights="model", noise_floor=50.0,
-                  y_lower_lim=int(d["y_lower_lim"]), sP0=None, lib=os.path.join(here, "libslitdec_ox.so"))
-print(f"  weighted slit_func_ox vs pyslitdec_ox model weights: max |dsP|/sP "
+rp = charslit.slitdec(im, np.sqrt(np.maximum(im, 0) / 2.0 + 25.0), native(d["msk"], np.uint8),
+                      ycen, sc, np.zeros(int(d["nysf"])), osample=int(d["osamp"]), osample_x=8,
+                      mu_x=[0.0, 0.0, 1.64e-4], mu_y=[1e-2, 0.0], lambda_sL=0.0, maxiter=100,
+                      kappa=10.0, weights="model", noise_floor=25.0,
+                      y_lower_lim=int(d["y_lower_lim"]))
+print(f"  weighted slit_func_ox vs charslit model weights: max |dsP|/sP "
       f"{np.max(np.abs(rw['sp'] - rp['spectrum'])[10:-10] / np.abs(rp['spectrum'][10:-10])):.2e}")
 for ref in refs:
-    # the REDUCE library uses lambda_sf; slitdec_ox's equivalent penalty is mu1_y below
+    # the REDUCE library uses lambda_sf; slitdec_ox's equivalent penalty is mu1_y below.
+    # Not bit-identical any more: slitdec evaluates the tilt at the subpixel centre, REDUCE at
+    # its lower edge, so lines differ by a shift of c1/(2 osample) (docs/slitdec_ox.md).
     rr = call_reduce(ref)
     report(os.path.basename(ref), rr, r8)
-    report("  slitdec_ox ox=1 mu_x=0 mu1_y=equiv t_offset=0", r1, rr)
+    report("  slitdec_ox ox=1 mu_x=0 mu1_y=equiv", r1, rr)
     print(f"    max |dsP| {np.max(np.abs(r1['sp'] - rr['sp'])):.3g}  max |dsL| "
           f"{np.max(np.abs(r1['sL'] - rr['sL'])):.3g}  mask diffs {np.sum(r1['mask'] != rr['mask'])}")

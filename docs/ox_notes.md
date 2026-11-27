@@ -1,5 +1,12 @@
 # slitdec_ox: slitdec with oversampling in x and y
 
+> Nik Piskunov's working notes from the slitdec_ox repository (up to d27f846, Nov 2026),
+> merged into SlitDec. Names used below have since changed: `slitdec_ox.c` /
+> `slitdec_ox2()` are `slitdec/slitdec.c` / `slitdec()`, `pyslitdec_ox` is `charslit`,
+> the IDL wrapper is in `idl/`, and `slitdec_ox_t_offset` is gone (the tilt is always
+> evaluated at the subpixel centre). The reference documentation is
+> [slitdec_ox.md](slitdec_ox.md).
+
 `slitdec_ox.c` is CharSlit `slitdec.c` (c878d00, as vendored in PyReduce) with the
 spectrum solved on `osample_x` fine bins per column. Each y-subpixel of the slit
 function, shifted by the curvature, contributes to a detector pixel by the overlap

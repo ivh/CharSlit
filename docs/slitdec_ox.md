@@ -1,9 +1,10 @@
 # slitdec_ox: slitdec with oversampling in x and y
 
 `slitdec/slitdec.c` is N. Piskunov's slitdec_ox (https://github.com/nikolai-piskunov/slitdec_ox,
-GPL-3.0 like the rest of CharSlit; its history is merged in), which he derived from our
+GPL-3.0 like the rest of SlitDec; its history is merged in), which he derived from our
 `slitdec.c` (c878d00). It came back in November 2026 as the one engine, under the old file
-and function names: the IDL REDUCE interface and the ctypes wrapper were removed,
+and function names: the IDL REDUCE interface moved to `idl/` (see idl/README.md), the
+ctypes wrapper was removed,
 `lambda_sP` made an argument, `weights='model'` brought up to 5e38be4
 (a·model + b), and `out_x` and the propagated uncertainties added. The C function
 `slitdec()` keeps its 21 historic arguments in the old order; the new ones follow.

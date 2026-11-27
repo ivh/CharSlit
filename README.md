@@ -1,10 +1,13 @@
-# CharSlit
+# SlitDec
 
-Python wrapper for the `slitdec` C library, providing slit decomposition for astronomical spectrograph data.
+The `slitdec` C library for slit decomposition of astronomical spectrograph data, with a
+Python wrapper (the `charslit` package) and an IDL REDUCE interface (`idl/`, see
+[idl/README.md](idl/README.md)). Formerly CharSlit; it now also holds N. Piskunov's
+slitdec_ox ([docs/slitdec_ox.md](docs/slitdec_ox.md)).
 
 ## What It Does
 
-CharSlit separates a 2D spectral image into its components:
+slitdec separates a 2D spectral image into its components:
 - **1D Spectrum**: Intensity vs wavelength
 - **1D Slit function**: Spatial illumination pattern along the slit
 - **2D Model**: Reconstructed image from spectrum ⊗ slit function
@@ -15,8 +18,8 @@ The algorithm handles slit curvature, pixel-to-pixel variations, outlier rejecti
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd CharSlit
+git clone https://github.com/ivh/SlitDec.git
+cd SlitDec
 
 # Install with uv
 uv pip install -e .

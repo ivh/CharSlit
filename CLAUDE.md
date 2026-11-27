@@ -1,6 +1,24 @@
 # CLAUDE.md - Developer Notes for Future Sessions
 
-This document contains important information about the CharSlit codebase, build system, and key implementation details that were discovered during development.
+This document contains important information about the SlitDec codebase (formerly CharSlit; the
+Python package is still `charslit`), build system, and key implementation details that were
+discovered during development.
+
+## One engine, shared with Nik Piskunov (November 2026)
+
+github.com/ivh/SlitDec is the only home of `slitdec/slitdec.c`. Nik Piskunov has write access;
+his slitdec_ox repo is merged in with history (`git log --follow idl/slitdec_ox_idl.c`) and
+retired. master is protected (PR + 1 approval; admins exempt). Core changes go on branches
+and need `uv run pytest` and the goldens (`tests/test_regression.py`) to pass before merging.
+- `idl/`: IDL REDUCE `CALL_EXTERNAL` entry point `slit_func_ox` (27 explicit args, no
+  defaults), built by `sh idl/build.sh` from the same slitdec.c. The adapter maps
+  weight_mode 1 (gain, read noise) to model weights with pix_unc^2 = max(im,0)/gain +
+  (RN/gain)^2 and b fixed: a zero pix_unc would make the variance fit return a = 0, i.e.
+  silently unweighted. It also zeroes the `margin - SLITDEC_EDGE` (= tilt shift) columns
+  per end and reports that in info[4], because mkslitf.pro expects slit_func_2d's
+  convention. `tests/test_idl.py` covers it; `idl/test_idl_interface.py` needs Nik's
+  test.sav (gitignored `*.sav`).
+- `docs/ox_notes.md`: Nik's working notes (SALT-HRS, REDUCE, penalty studies).
 
 ## slitdec_ox (November 2026)
 
@@ -46,7 +64,7 @@ flat fast path at `osample_x=1`, weights) carries over; line references and some
 
 ## Project Overview
 
-CharSlit is a Python wrapper for the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
+SlitDec (Python package `charslit`) wraps the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
 - **Spectrum**: 1D array representing intensity vs wavelength
 - **Slit function**: 1D array representing the spatial illumination pattern
 - **Model**: Reconstructed 2D image from spectrum ⊗ slit function
