@@ -54,7 +54,7 @@ end
 
 pro idl_test_ox, savfile, old_lib=old_lib, new_lib=new_lib
   here = file_dirname((routine_info('idl_test_ox', /source)).path)
-  if n_elements(savfile) eq 0 then savfile = here + '/../test.sav'
+  if n_elements(savfile) eq 0 then savfile = here + '/../data/test.sav'
   if n_elements(old_lib) eq 0 then old_lib = expand_path('~/IDL/REDUCE') + '/reduce.so.darwin.arm64.64'
   if n_elements(new_lib) eq 0 then new_lib = here + '/libslitdec_ox_idl.so'
   restore, savfile

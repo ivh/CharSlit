@@ -10,7 +10,7 @@ import numpy as np
 from scipy.io import readsav
 
 here = os.path.dirname(os.path.abspath(__file__))
-sav = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "test.sav")
+sav = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "..", "data", "test.sav")
 refs = sys.argv[2:]
 d = readsav(sav)
 
