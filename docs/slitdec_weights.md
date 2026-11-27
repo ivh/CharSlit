@@ -5,7 +5,7 @@
 `328e699` both solves can weight the detector pixels:
 
 ```python
-charslit.slitdec(im, pix_unc, mask, ycen, slitcurve, slitdeltas,
+slitdec.slitdec(im, pix_unc, mask, ycen, slitcurve, slitdeltas,
                  weights="none",      # "none" | "unc" | "model" | "flux"
                  noise_floor=None)    # only for "model"
 ```

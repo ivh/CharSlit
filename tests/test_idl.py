@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import charslit
+import slitdec
 from synth import fp_spec, make_swath
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ def call(L, im, ycen, sc, weights=0, gain=1.0, read_noise=0.0, mux=MU_X, muy=MU_
 
 
 def python(im, ycen, sc, **kw):
-    return charslit.slitdec(im, kw.pop("pix_unc", np.ones_like(im)), np.ones(im.shape, np.uint8),
+    return slitdec.slitdec(im, kw.pop("pix_unc", np.ones_like(im)), np.ones(im.shape, np.uint8),
                             ycen, sc, np.zeros(NR), osample=OS, osample_x=OX, mu_x=list(MU_X),
                             mu_y=list(MU_Y), lambda_sL=0.0, maxiter=100, kappa=10.0,
                             y_lower_lim=YLL, **kw)

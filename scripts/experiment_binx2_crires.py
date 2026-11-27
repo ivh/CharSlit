@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 
-import charslit
+import slitdec
 from analyse_wide_bisector import bis_value, bisector
 from make_swath import cut_swath
 
@@ -55,7 +55,7 @@ LEVELS = np.linspace(0.10, 0.95, 35)
 def extract(sw, s, mu3=0.0):
     im, unc = sw["im"], sw["unc"]
     good = np.isfinite(im) & np.isfinite(unc) & (unc > 0)
-    r = charslit.slitdec(
+    r = slitdec.slitdec(
         np.where(good, im, 0.0),
         np.where(good, unc, 1.0),
         good.astype(np.uint8),

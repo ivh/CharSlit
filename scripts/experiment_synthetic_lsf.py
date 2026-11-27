@@ -50,7 +50,7 @@ if os.environ.get("SHOW", "1") == "0":
 import matplotlib.pyplot as plt
 import numpy as np
 
-import charslit
+import slitdec
 
 Q = 50  # sub-pixel render resolution (sub-bins per detector pixel)
 
@@ -148,7 +148,7 @@ def mu_x_of(mu3):
 
 def extract(im, unc, ycen, slitcurve, slitdeltas, osample, s, mu3,
             lambda_sP=0.0):
-    r = charslit.slitdec(
+    r = slitdec.slitdec(
         im, unc, np.ones(im.shape, dtype=np.uint8), ycen.copy(),
         slitcurve, slitdeltas, osample=osample, osample_x=s,
         lambda_sP=lambda_sP, mu_x=mu_x_of(mu3), kappa=0.0,

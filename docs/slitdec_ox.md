@@ -23,9 +23,9 @@ weights. `spectrum` stays on the detector grid (mean of the fine bins = what a v
 slit records); `spectrum_fine` is the fine solution.
 
 Recommended when the slit is tilted or lines are under-sampled:
-`charslit.slitdec(..., osample_x=8)`.
+`slitdec.slitdec(..., osample_x=8)`.
 
-New arguments of `charslit.slitdec`:
+New arguments of `slitdec.slitdec`:
 - `osample_x=1`: fine bins per column.
 - `mu_x=None`: penalties on the 1st, 2nd, ... derivative of the spectrum. None means no
   penalty at `osample_x=1` and `(0, 0, 1.64e-4)` otherwise.
@@ -139,7 +139,7 @@ weight modes. `tests/test_ox.py` covers what is new: tilt reference point, line 
 
 Swath edges: the outermost columns of the solution are unreliable, up to many times the
 flux on real data. They are returned as solved, not zeroed. `result['margin']` (=
-`info[4]`, also `charslit.edge_margin()` before the solve) is the number of columns per
+`info[4]`, also `slitdec.edge_margin()` before the solve) is the number of columns per
 end not to use: the largest slit-image shift, rounded up, plus `SLITDEC_EDGE` = 2. Give
 them zero weight when merging swaths and drop them at the order ends. The constant covers
 the linear split; the untilted ox ripple reaches further (ox_experiments.md, section 3).

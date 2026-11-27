@@ -27,7 +27,7 @@ from scipy.special import erf
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from synth import make_swath
-import charslit
+import slitdec
 
 NR, NC, OS = 40, 200, 10
 
@@ -72,7 +72,7 @@ def metrics(sL, prof, os_):
 
 
 def run(img, ycen, sc, mu_y=None, lam=None, os_=OS):
-    r = charslit.slitdec(img, np.ones_like(img), np.ones(img.shape, np.uint8), ycen, sc,
+    r = slitdec.slitdec(img, np.ones_like(img), np.ones(img.shape, np.uint8), ycen, sc,
                          np.zeros(img.shape[0]), osample=os_, osample_x=1, mu_x=[], kappa=0,
                          maxiter=30, mu_y=mu_y, lambda_sL=lam if lam is not None else 1.0)
     return r["slitfunction"], np.concatenate([r["info"], r["info_ox"]])

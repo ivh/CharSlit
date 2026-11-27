@@ -1,4 +1,4 @@
-"""Pytest configuration and fixtures for charslit tests."""
+"""Pytest configuration and fixtures for slitdec tests."""
 
 import sys
 from pathlib import Path
@@ -45,7 +45,7 @@ def save_test_data(request):
     Usage in tests:
         @pytest.mark.save_output
         def test_something(self, data, save_test_data):
-            result = charslit.slitdec(...)
+            result = slitdec.slitdec(...)
             save_test_data(data['im'], result['model'],
                           spectrum=result['spectrum'],
                           slitfunction=result['slitfunction'],

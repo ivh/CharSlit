@@ -1,7 +1,7 @@
 # CLAUDE.md - Developer Notes for Future Sessions
 
-This document contains important information about the SlitDec codebase (formerly CharSlit; the
-Python package is still `charslit`), build system, and key implementation details that were
+This document contains important information about the SlitDec codebase (C library and
+Python package `slitdec`), build system, and key implementation details that were
 discovered during development.
 
 ## One engine, shared with Nik Piskunov (November 2026)
@@ -49,7 +49,7 @@ The C `slitdec()` keeps its 21 historic arguments in order, new ones follow.
   `spectrum_fine` come back as solved in every column; the edge columns can be many times
   the flux. `result['margin']` = `info[4]` = largest slit-image shift (curvature and
   slitdeltas, each on its own, rounded up) + `SLITDEC_EDGE` (2, slitdec.h) is the number of
-  columns per end a caller must not use; `charslit.edge_margin()` / C `slitdec_margin()`
+  columns per end a caller must not use; `slitdec.edge_margin()` / C `slitdec_margin()`
   give it before the solve, for laying out swaths. Callers use it verbatim, no +-1. The
   internal `delta_x` (allocation, residual statistics, with the floor of 1 for a spectrum
   penalty) is a different number. Same convention in cr2res (`CR2RES_EXTRACT_SWATH_EDGE`);
@@ -64,7 +64,7 @@ flat fast path at `osample_x=1`, weights) carries over; line references and some
 
 ## Project Overview
 
-SlitDec (Python package `charslit`) wraps the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
+The `slitdec` Python package wraps the `slitdec` C library, which performs slit decomposition for astronomical spectrograph data. It separates a 2D spectral image into:
 - **Spectrum**: 1D array representing intensity vs wavelength
 - **Slit function**: 1D array representing the spatial illumination pattern
 - **Model**: Reconstructed 2D image from spectrum ⊗ slit function
@@ -188,7 +188,7 @@ The script handles NaN pixels (bad pixels) using numpy masked arrays:
 **CMakeLists.txt**: The C code is compiled **directly** with the extension module, not as a separate static library:
 ```cmake
 nanobind_add_module(
-  charslit
+  slitdec
   STABLE_ABI
   NB_STATIC
   slitdec/slitdec_wrapper.cpp

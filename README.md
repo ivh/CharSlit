@@ -1,9 +1,8 @@
 # SlitDec
 
 The `slitdec` C library for slit decomposition of astronomical spectrograph data, with a
-Python wrapper (the `charslit` package) and an IDL REDUCE interface (`idl/`, see
-[idl/README.md](idl/README.md)). Formerly CharSlit; it now also holds N. Piskunov's
-slitdec_ox ([docs/slitdec_ox.md](docs/slitdec_ox.md)).
+Python package `slitdec` and an IDL REDUCE interface (`idl/`, see
+[idl/README.md](idl/README.md)). It includes N. Piskunov's slitdec_ox ([docs/slitdec_ox.md](docs/slitdec_ox.md)).
 
 ## What It Does
 
@@ -29,7 +28,7 @@ uv pip install -e .
 
 ```python
 import numpy as np
-import charslit
+import slitdec
 
 # Load your spectral image and prepare inputs
 im = ...              # 2D spectral image (nrows, ncols)
@@ -40,7 +39,7 @@ slitcurve = ...       # Curvature coefficients (ncols, 3)
 slitdeltas = ...      # Horizontal offsets (nrows,) - auto-interpolated
 
 # Run decomposition
-result = charslit.slitdec(
+result = slitdec.slitdec(
     im, pix_unc, mask, ycen, slitcurve, slitdeltas,
     osample=6,        # Oversampling factor
     lambda_sP=0.0,    # Spectrum smoothing

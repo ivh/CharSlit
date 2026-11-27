@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
-import charslit
+import slitdec
 from synth import make_swath
 
 NC, NR = 400, 136
@@ -34,12 +34,12 @@ for shear in (0.0, 2.0, 8.0):
                 d = m + np.sqrt(V) * z
                 a = (d, np.sqrt(V), np.ones(d.shape, np.uint8), yc, sc, np.zeros(NR))
                 o = 2 if kw["osample_x"] > 1 else None
-                r0 = charslit.slitdec(*a, osample=8, kappa=0.0, weights=w, **kw)
-                r1 = charslit.slitdec(*a, osample=8, kappa=0.0, weights=w, uncertainty="propagated", **kw)
+                r0 = slitdec.slitdec(*a, osample=8, kappa=0.0, weights=w, **kw)
+                r1 = slitdec.slitdec(*a, osample=8, kappa=0.0, weights=w, uncertainty="propagated", **kw)
                 S.append(r1["spectrum"][TR]); Ur.append(r0["uncertainty"][TR]); Up.append(r1["uncertainty"][TR])
                 Cv.append(r1["covariance"][TR]); chi.append(r1["chi2"])
                 if o:
-                    r2 = charslit.slitdec(*a, osample=8, kappa=0.0, weights=w, uncertainty="propagated", out_x=o, **kw)
+                    r2 = slitdec.slitdec(*a, osample=8, kappa=0.0, weights=w, uncertainty="propagated", out_x=o, **kw)
                     S2.append(r2["spectrum_out"][T2]); C2.append(r2["covariance"][T2])
             S = np.array(S); D = S - S.mean(0); emp = S.std(0).mean(); Cv = np.mean(Cv, 0)
             r1e = (D[:, 1:] * D[:, :-1]).mean() / D.var(); r1p = Cv[:, 1].mean() / Cv[:, 0].mean()

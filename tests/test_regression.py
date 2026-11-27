@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import charslit
+import slitdec
 
 REFERENCE_DIR = Path(__file__).parent / "reference_data"
 COMPARED_KEYS = ("spectrum", "slitfunction", "model", "uncertainty")
@@ -147,7 +147,7 @@ SYNTHETIC_CASES = {
 @pytest.mark.parametrize("case_name", sorted(SYNTHETIC_CASES))
 def test_synthetic_golden(case_name, golden_check):
     data = SYNTHETIC_CASES[case_name]()
-    result = charslit.slitdec(
+    result = slitdec.slitdec(
         data["im"],
         data["pix_unc"],
         data["mask"],
@@ -162,7 +162,7 @@ def test_synthetic_golden(case_name, golden_check):
 
 def test_real_data_golden(real_data_files, golden_check):
     data = real_data_files
-    result = charslit.slitdec(
+    result = slitdec.slitdec(
         data["im"],
         data["pix_unc"],
         data["mask"],

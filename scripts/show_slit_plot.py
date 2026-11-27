@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 import numpy as np
 from astropy.io import fits
-import charslit
+import slitdec
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from plotting import plot_slitdec_results  # noqa: E402
 
@@ -120,7 +120,7 @@ def main():
 
     print("Running slitdec...")
     try:
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],

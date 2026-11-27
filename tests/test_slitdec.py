@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-import charslit
+import slitdec
 
 
 class TestBasicFunctionality:
@@ -10,17 +10,17 @@ class TestBasicFunctionality:
 
     def test_import_module(self):
         """Test that the module can be imported."""
-        assert hasattr(charslit, "slitdec")
+        assert hasattr(slitdec, "slitdec")
 
     def test_function_callable(self):
         """Test that slitdec is callable."""
-        assert callable(charslit.slitdec)
+        assert callable(slitdec.slitdec)
 
     @pytest.mark.save_output
     def test_basic_execution(self, simple_image_data, save_test_data):
         """Test that slitdec runs without errors on valid input."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -39,7 +39,7 @@ class TestBasicFunctionality:
     def test_with_custom_parameters(self, simple_image_data, save_test_data):
         """Test slitdec with custom parameters."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -64,7 +64,7 @@ class TestOutputStructure:
     def test_output_keys(self, simple_image_data, save_test_data):
         """Test that all expected keys are present in output."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -91,7 +91,7 @@ class TestOutputStructure:
     def test_output_types(self, simple_image_data, save_test_data):
         """Test that output arrays have correct types."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -112,7 +112,7 @@ class TestOutputStructure:
     def test_output_shapes(self, simple_image_data, save_test_data):
         """Test that output arrays have correct shapes."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -132,7 +132,7 @@ class TestOutputStructure:
     def test_output_dtypes(self, simple_image_data, save_test_data):
         """Test that output arrays have correct dtypes."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -159,7 +159,7 @@ class TestInputValidation:
         wrong_pix_unc = np.ones((10, 10))  # Wrong shape
 
         with pytest.raises(RuntimeError, match="pix_unc must have same shape"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 wrong_pix_unc,
                 data["mask"],
@@ -174,7 +174,7 @@ class TestInputValidation:
         wrong_mask = np.ones((10, 10), dtype=np.uint8)
 
         with pytest.raises(RuntimeError, match="mask must have same shape"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 wrong_mask,
@@ -189,7 +189,7 @@ class TestInputValidation:
         wrong_ycen = np.ones(10)  # Wrong length
 
         with pytest.raises(RuntimeError, match="ycen must have length ncols"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 data["mask"],
@@ -204,7 +204,7 @@ class TestInputValidation:
         wrong_slitcurve = np.zeros((10, 3))  # Wrong shape
 
         with pytest.raises(RuntimeError, match="slitcurve must have shape"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 data["mask"],
@@ -219,7 +219,7 @@ class TestInputValidation:
         wrong_slitdeltas = np.zeros(10)  # Wrong length
 
         with pytest.raises(RuntimeError, match="slitdeltas must have length"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 data["mask"],
@@ -235,7 +235,7 @@ class TestNumericalBehavior:
     def test_spectrum_normalization(self, simple_image_data, save_test_data):
         """Test that the extracted spectrum is properly normalized."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -254,7 +254,7 @@ class TestNumericalBehavior:
     def test_slitfunction_normalization(self, simple_image_data, save_test_data):
         """Test that the slit function is normalized."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -272,7 +272,7 @@ class TestNumericalBehavior:
     def test_model_reconstruction(self, simple_image_data, save_test_data):
         """Test that the model has correct properties."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -296,7 +296,7 @@ class TestNumericalBehavior:
     def test_info_array_content(self, simple_image_data, save_test_data):
         """Test that info array contains meaningful values."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -327,7 +327,7 @@ class TestNumericalBehavior:
         im = data["im"].copy()
         im[data["nrows"] // 2, data["ncols"] // 2] = np.nan
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             im,
             data["pix_unc"],
             data["mask"],
@@ -352,7 +352,7 @@ class TestNumericalBehavior:
         im_with_outliers[5, 10] = 1e6  # Large outlier
         im_with_outliers[7, 15] = -1e6  # Large negative outlier
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             im_with_outliers,
             data["pix_unc"],
             data["mask"],
@@ -386,7 +386,7 @@ class TestNumericalBehavior:
 
         im = data["im"].copy()
         im[mask == 0] = np.nan
-        r = charslit.slitdec(im, data["pix_unc"], mask, data["ycen"],
+        r = slitdec.slitdec(im, data["pix_unc"], mask, data["ycen"],
                              data["slitcurve"], data["slitdeltas"], **kw)
         assert not np.any(r["mask"][mask == 0]), "NaN pixel re-admitted"
         assert np.all(np.isfinite(r["spectrum"]))
@@ -411,7 +411,7 @@ class TestNumericalBehavior:
         for k in range(osample):
             ycen = np.full(ncols, 9 + k / osample + 1e-12)
             ycen[x0] = 9 + k / osample
-            result = charslit.slitdec(
+            result = slitdec.slitdec(
                 im, pix_unc, np.ones(im.shape, dtype=np.uint8), ycen,
                 slitcurve, np.zeros(nrows), osample=osample, kappa=0.0,
             )
@@ -425,7 +425,7 @@ class TestEdgeCases:
     def test_minimal_image(self, minimal_image_data, save_test_data):
         """Test with minimal valid image size."""
         data = minimal_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -440,7 +440,7 @@ class TestEdgeCases:
     def test_with_curvature(self, curved_image_data, save_test_data):
         """Test with slit curvature."""
         data = curved_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -464,7 +464,7 @@ class TestEdgeCases:
         expected = int(np.ceil(np.abs(shift).max())) + 2
         assert expected > 2
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -476,7 +476,7 @@ class TestEdgeCases:
         assert result["margin"] == expected
         assert result["info"][4] == expected
         assert (
-            charslit.edge_margin(
+            slitdec.edge_margin(
                 data["slitcurve"], data["slitdeltas"], nrows, osample=data["osample"]
             )
             == expected
@@ -486,13 +486,13 @@ class TestEdgeCases:
         # slitdeltas count on their own, not added to the curvature shift
         deltas = np.full(nrows, expected - 2 + 0.5)
         assert (
-            charslit.edge_margin(data["slitcurve"], deltas, nrows, osample=data["osample"])
+            slitdec.edge_margin(data["slitcurve"], deltas, nrows, osample=data["osample"])
             == expected + 1
         )
 
     def test_edge_margin_flat(self, simple_image_data):
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -506,7 +506,7 @@ class TestEdgeCases:
     def test_high_smoothing(self, simple_image_data, save_test_data):
         """Test with high smoothing parameters."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -522,7 +522,7 @@ class TestEdgeCases:
     def test_low_iterations(self, simple_image_data, save_test_data):
         """Test with low iteration count."""
         data = simple_image_data
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -544,7 +544,7 @@ class TestEdgeCases:
             ny = osample * (data["nrows"] + 1) + 1
             slitdeltas = np.zeros(ny)
 
-            result = charslit.slitdec(
+            result = slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 data["mask"],
@@ -571,7 +571,7 @@ class TestDefaultParameters:
         ny = osample * (data["nrows"] + 1) + 1
         slitdeltas = np.zeros(ny)
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -587,7 +587,7 @@ class TestDefaultParameters:
         data = simple_image_data
 
         # Use defaults
-        result1 = charslit.slitdec(
+        result1 = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"].copy(),
@@ -597,7 +597,7 @@ class TestDefaultParameters:
         )
 
         # Use explicit defaults
-        result2 = charslit.slitdec(
+        result2 = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"].copy(),
@@ -630,7 +630,7 @@ class TestMemoryManagement:
         slitcurve_copy = data["slitcurve"].copy()
         slitdeltas_copy = data["slitdeltas"].copy()
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -651,7 +651,7 @@ class TestMemoryManagement:
         """Test that multiple calls work correctly."""
         data = simple_image_data
 
-        result1 = charslit.slitdec(
+        result1 = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"].copy(),
@@ -660,7 +660,7 @@ class TestMemoryManagement:
             data["slitdeltas"],
         )
 
-        result2 = charslit.slitdec(
+        result2 = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"].copy(),
@@ -683,7 +683,7 @@ class TestRealData:
         """Test slitdec on real FITS data from data/ directory."""
         data = real_data_files
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -724,7 +724,7 @@ class TestPresetSlitfunction:
     def test_roundtrip_matches_normal_run(self, simple_image_data):
         """A normal run's slit function fed back as a preset reproduces the spectrum."""
         data = simple_image_data
-        normal = charslit.slitdec(
+        normal = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -736,7 +736,7 @@ class TestPresetSlitfunction:
         assert normal["return_code"] == 0
 
         preset = normal["slitfunction"].copy()
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -760,7 +760,7 @@ class TestPresetSlitfunction:
         true profile (recovered by a normal run) is clearly non-flat.
         """
         data = simple_image_data
-        normal = charslit.slitdec(
+        normal = slitdec.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
         )
@@ -768,7 +768,7 @@ class TestPresetSlitfunction:
         assert normal["slitfunction"].std() > 1e-3
 
         flat = np.full(data["ny"], 1.0 / data["osample"])
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
             preset_slitfunc=flat,
@@ -790,7 +790,7 @@ class TestPresetSlitfunction:
         single sP solve must reproduce the spectrum that built it.
         """
         data = simple_image_data
-        normal = charslit.slitdec(
+        normal = slitdec.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
             kappa=0,
@@ -798,7 +798,7 @@ class TestPresetSlitfunction:
         assert normal["return_code"] == 0
 
         clean_im = np.ascontiguousarray(normal["model"])
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             clean_im,
             np.ones_like(clean_im),
             np.ones(clean_im.shape, dtype=np.uint8),
@@ -813,14 +813,14 @@ class TestPresetSlitfunction:
         """Preset + kappa=0 runs exactly one iteration and still matches
         the spectrum of the normal run that produced the slit function."""
         data = simple_image_data
-        normal = charslit.slitdec(
+        normal = slitdec.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
             kappa=0,
         )
         assert normal["return_code"] == 0
 
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"], data["pix_unc"], data["mask"], data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
             kappa=0,
@@ -836,7 +836,7 @@ class TestPresetSlitfunction:
         """A preset of length ny is used directly."""
         data = simple_image_data
         preset = np.full(data["ny"], 1.0 / data["osample"])
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -854,7 +854,7 @@ class TestPresetSlitfunction:
         """A preset of length nrows is interpolated up to ny."""
         data = simple_image_data
         preset = np.ones(data["nrows"])
-        result = charslit.slitdec(
+        result = slitdec.slitdec(
             data["im"],
             data["pix_unc"],
             data["mask"],
@@ -872,7 +872,7 @@ class TestPresetSlitfunction:
         data = simple_image_data
         wrong = np.ones(7)
         with pytest.raises(RuntimeError, match="preset_slitfunc must have length"):
-            charslit.slitdec(
+            slitdec.slitdec(
                 data["im"],
                 data["pix_unc"],
                 data["mask"],
@@ -888,7 +888,7 @@ class TestModelWeights:
     """weights='model': variance a*model + b fitted to pix_unc^2."""
 
     def _run(self, data, pix_unc, weights):
-        return charslit.slitdec(
+        return slitdec.slitdec(
             data["im"], pix_unc, data["mask"].copy(), data["ycen"],
             data["slitcurve"], data["slitdeltas"], osample=data["osample"],
             weights=weights,

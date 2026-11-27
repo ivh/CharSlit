@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15...3.27)
 
-project(charslit LANGUAGES C CXX)
+project(slitdec LANGUAGES C CXX)
 
 # Find Python
 find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
@@ -26,7 +26,7 @@ find_package(nanobind CONFIG REQUIRED)
 
 # Create nanobind extension module
 nanobind_add_module(
-  charslit
+  slitdec
   STABLE_ABI
   NB_STATIC
   slitdec/slitdec_wrapper.cpp
@@ -36,10 +36,10 @@ nanobind_add_module(
 # Explicitly set language for C file
 set_source_files_properties(slitdec/slitdec.c PROPERTIES LANGUAGE C)
 
-target_include_directories(charslit PRIVATE
+target_include_directories(slitdec PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/slitdec
 )
 
 
 # Install the extension module
-install(TARGETS charslit LIBRARY DESTINATION .)
+install(TARGETS slitdec LIBRARY DESTINATION .)

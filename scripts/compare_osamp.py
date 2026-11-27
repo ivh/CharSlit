@@ -2,7 +2,7 @@
 recover sub-pixel line structure that osample_x=1 throws away?
 
 Builds a synthetic, *tilted*, *under-sampled* emission line and extracts it at
-osample_x = 1, 2, 3 directly through charslit. The slit tilt is what makes
+osample_x = 1, 2, 3 directly through slitdec. The slit tilt is what makes
 super-resolution possible: each detector row samples the line at a slightly
 different sub-pixel phase, so the fine grid is constrained where the osamp=1
 block-mean staircase would alias it away.
@@ -24,7 +24,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-import charslit
+import slitdec
 
 
 def make_tilted_line(nrows, ncols, osample, sigma_disp, slope, line_x0,
@@ -74,7 +74,7 @@ def mu_x_of(mu3):
 
 
 def extract(data, s, lambda_sP, mu3):
-    r = charslit.slitdec(
+    r = slitdec.slitdec(
         data["im"], data["pix_unc"], data["mask"].copy(), data["ycen"],
         data["slitcurve"], data["slitdeltas"],
         osample=data["osample"], osample_x=s,

@@ -1,6 +1,6 @@
 # slitdec_ox: experiments and results, November 2026
 
-What was measured while making N. Piskunov's `slitdec_ox` the engine of `charslit.slitdec`
+What was measured while making N. Piskunov's `slitdec_ox` the engine of `slitdec.slitdec`
 (2026-11-06 to 2026-11-16), and what follows from it. Reference for the engine and its
 arguments: [slitdec_ox.md](slitdec_ox.md). Bisector primer and the design of the
 sampling-recovery experiments: [bisector_experiments.md](bisector_experiments.md).

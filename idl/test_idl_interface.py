@@ -127,10 +127,9 @@ for m in (1e-3, 1e-1):
 report("slitdec_ox ox=1 mu_x=0 mu1_y=equiv", r1, r8)
 
 # weights: variance = model/gain + (RN/gain)^2, invariant to gain when RN scales with it
-# (only the ratio RN^2/gain matters). Same as charslit's model weights with the
+# (only the ratio RN^2/gain matters). Same as the slitdec Python package's model weights with the
 # pix_unc the wrapper builds and noise_floor = (RN/gain)^2.
-sys.path.insert(0, os.path.join(here, ".."))
-import charslit
+import slitdec
 rw = call(lib, 8, weights=1, gain=2.0, read_noise=10.0)
 rw2 = call(lib, 8, weights=1, gain=8.0, read_noise=20.0)
 report("slitdec_ox ox=8 weights gain 2 RN 10", rw, r8)
@@ -138,12 +137,12 @@ assert rw["rc"] == 0 and np.array_equal(rw["sp"], rw2["sp"]), "weights depend on
 im = native(d["sf"], np.float64)
 ycen = native(d["ycen_fract"], np.float64) + native(d["ycen_int"], np.int32)
 sc = np.zeros((int(d["nc"]), 6)); sc[:, 1:3] = native(d["psf_curve"], np.float64)[:, 1:3]
-rp = charslit.slitdec(im, np.sqrt(np.maximum(im, 0) / 2.0 + 25.0), native(d["msk"], np.uint8),
+rp = slitdec.slitdec(im, np.sqrt(np.maximum(im, 0) / 2.0 + 25.0), native(d["msk"], np.uint8),
                       ycen, sc, np.zeros(int(d["nysf"])), osample=int(d["osamp"]), osample_x=8,
                       mu_x=[0.0, 0.0, 1.64e-4], mu_y=[1e-2, 0.0], lambda_sL=0.0, maxiter=100,
                       kappa=10.0, weights="model", noise_floor=25.0,
                       y_lower_lim=int(d["y_lower_lim"]))
-print(f"  weighted slit_func_ox vs charslit model weights: max |dsP|/sP "
+print(f"  weighted slit_func_ox vs slitdec model weights: max |dsP|/sP "
       f"{np.max(np.abs(rw['sp'] - rp['spectrum'])[10:-10] / np.abs(rp['spectrum'][10:-10])):.2e}")
 for ref in refs:
     # the REDUCE library uses lambda_sf; slitdec_ox's equivalent penalty is mu1_y below.

@@ -4,11 +4,11 @@ import numpy as np, time, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from synth import *
-import charslit
+import slitdec
 
 
 def slitdec_ox(im, pix_unc, ycen, slitcurve, **kw):
-    return charslit.slitdec(im, pix_unc, np.ones(im.shape, np.uint8), ycen, slitcurve,
+    return slitdec.slitdec(im, pix_unc, np.ones(im.shape, np.uint8), ycen, slitcurve,
                             np.zeros(im.shape[0]), **kw)
 
 

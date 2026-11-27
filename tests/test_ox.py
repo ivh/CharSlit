@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import charslit
+import slitdec
 from synth import box_int, fp_spec, make_swath
 
 NC, NR = 400, 136
@@ -21,7 +21,7 @@ def fp_swath():
 
 
 def extract(im, ycen, sc, **kw):
-    r = charslit.slitdec(im, np.ones_like(im), np.ones(im.shape, np.uint8), ycen, sc,
+    r = slitdec.slitdec(im, np.ones_like(im), np.ones(im.shape, np.uint8), ycen, sc,
                          np.zeros(NR), kappa=0.0, **kw)
     assert r["return_code"] == 0 and r["info"][2] == 1
     return r
@@ -110,8 +110,8 @@ class TestPropagatedUncertainty:
             for _ in range(40):
                 d = m + np.sqrt(m) * rng.standard_normal(m.shape)
                 a = (d, np.sqrt(m), np.ones(d.shape, np.uint8), ycen, sc, np.zeros(nr))
-                runs.append((charslit.slitdec(*a, osample=6, kappa=0.0, **kw),
-                             charslit.slitdec(*a, osample=6, kappa=0.0, uncertainty="propagated", **kw)))
+                runs.append((slitdec.slitdec(*a, osample=6, kappa=0.0, **kw),
+                             slitdec.slitdec(*a, osample=6, kappa=0.0, uncertainty="propagated", **kw)))
             out[name] = runs
         return out, slice(20, nc - 20)
 
@@ -141,9 +141,9 @@ class TestPropagatedUncertainty:
         _, im, ycen, sc, _ = fp_swath
         unc = np.sqrt(np.abs(im) + 1)
         a = (im, unc, np.ones(im.shape, np.uint8), ycen, sc, np.zeros(NR))
-        r0 = charslit.slitdec(*a, kappa=0.0, **OX8)
-        r1 = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", out_x=2, nlag=3, **OX8)
-        r2 = charslit.slitdec(*a, kappa=0.0, uncertainty="scaled", out_x=2, nlag=3, **OX8)
+        r0 = slitdec.slitdec(*a, kappa=0.0, **OX8)
+        r1 = slitdec.slitdec(*a, kappa=0.0, uncertainty="propagated", out_x=2, nlag=3, **OX8)
+        r2 = slitdec.slitdec(*a, kappa=0.0, uncertainty="scaled", out_x=2, nlag=3, **OX8)
         assert "covariance" not in r0 and "chi2" not in r0
         np.testing.assert_array_equal(r0["spectrum"], r1["spectrum"])
         assert r1["covariance"].shape == (NC * 2, 4)
@@ -155,7 +155,7 @@ class TestPropagatedUncertainty:
         var = (c[0::2, 0] + c[1::2, 0] + 2 * c[0::2, 1]) / 4
         np.testing.assert_allclose(np.sqrt(var), r1["uncertainty"], rtol=1e-9, atol=1e-12)
         with pytest.raises(RuntimeError):
-            charslit.slitdec(*a, uncertainty="horne")
+            slitdec.slitdec(*a, uncertainty="horne")
 
     def test_empty_column_is_nan(self, fp_swath):
         """A column without data has no error, not a zero one; the rest is unchanged.
@@ -167,7 +167,7 @@ class TestPropagatedUncertainty:
         a = (im, unc, mask, ycen, sc, np.zeros(NR))
         far = np.r_[TR.start : NC // 2 - 20, NC // 2 + 21 : TR.stop]
         for extra in (LINEAR, dict(OX8, out_x=2, nlag=2)):
-            r = charslit.slitdec(*a, kappa=0.0, uncertainty="propagated", **extra)
+            r = slitdec.slitdec(*a, kappa=0.0, uncertainty="propagated", **extra)
             assert np.isnan(r["uncertainty"][NC // 2])
             assert np.isfinite(r["uncertainty"][far]).all()
             if "covariance" in r:
@@ -177,6 +177,6 @@ def test_defaults_are_historic(fp_swath):
     """A plain call is the linear split; osample_x > 1 alone gets the whitening penalty."""
     _, im, ycen, sc, _ = fp_swath
     a = (im, np.ones_like(im), np.ones(im.shape, np.uint8), ycen, sc, np.zeros(NR))
-    np.testing.assert_array_equal(charslit.slitdec(*a)["spectrum"], charslit.slitdec(*a, **LINEAR)["spectrum"])
-    np.testing.assert_array_equal(charslit.slitdec(*a, osample_x=8)["spectrum"],
-                                  charslit.slitdec(*a, osample_x=8, mu_x=[0, 0, 1.64e-4])["spectrum"])
+    np.testing.assert_array_equal(slitdec.slitdec(*a)["spectrum"], slitdec.slitdec(*a, **LINEAR)["spectrum"])
+    np.testing.assert_array_equal(slitdec.slitdec(*a, osample_x=8)["spectrum"],
+                                  slitdec.slitdec(*a, osample_x=8, mu_x=[0, 0, 1.64e-4])["spectrum"])

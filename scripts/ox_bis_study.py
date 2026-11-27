@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matplotlib; matplotlib.use("Agg")
 import experiment_synthetic_lsf as E
 import analyse_wide_bisector as B
-import charslit
+import slitdec
 case = sys.argv[1] if len(sys.argv) > 1 else "wide"
 amp = float(sys.argv[2]) if len(sys.argv) > 2 else 4000.0
 tw, sg = dict(wide=(1.6, 0.5), baseline=(0.8, 0.25))[case]
@@ -39,7 +39,7 @@ rows = {}
 for s, name, mu, kw in CONF:
     bias = np.full((len(PH), len(SEEDS)), np.nan); rc = bias.copy(); fw = bias.copy(); cen = bias.copy(); it = bias.copy()
     for (ip, sd), (x0, im, unc, bt, xtw2, tn2) in images.items():
-        r = charslit.slitdec(im, unc, np.ones(im.shape, np.uint8), np.full(ncols, 0.5), sc, np.zeros(ny),
+        r = slitdec.slitdec(im, unc, np.ones(im.shape, np.uint8), np.full(ncols, 0.5), sc, np.zeros(ny),
                              osample=OS, osample_x=s, mu_x=mu, kappa=0.0, **kw)
         sp = r["spectrum_fine"]; xf = (np.arange(sp.size) + 0.5) / s
         xw, yw = B.area_normalise(xf, sp, x0, win)

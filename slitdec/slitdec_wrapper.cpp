@@ -370,7 +370,7 @@ static int edge_margin_wrapper(
                           y_lower_lim.has_value() ? *y_lower_lim : -1);
 }
 
-NB_MODULE(charslit, m) {
+NB_MODULE(slitdec, m) {
     m.def("edge_margin", &edge_margin_wrapper,
           nb::arg("slitcurve"),
           nb::arg("slitdeltas"),

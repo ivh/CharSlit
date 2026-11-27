@@ -3,7 +3,7 @@
 osample_x (default 1) = 1 runs the defaults (historic slitdec); > 1 that oversampling
 with the default penalty. maxpix skips larger frames.
 
-This times ONLY the charslit.slitdec C call (each case is loaded once, then the
+This times ONLY the slitdec.slitdec C call (each case is loaded once, then the
 call is repeated best-of-N) — no FITS IO or golden comparison in the timed loop.
 
 Speedup analysis (baseline 8b97f33 "regression harness added", pre-speedup,
@@ -45,7 +45,7 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
-import charslit
+import slitdec
 
 NREPEAT = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 OSAMPLE_X = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -110,7 +110,7 @@ if __name__ == "__main__":
         times = []
         for _ in range(NREPEAT):
             t0 = time.perf_counter()
-            result = charslit.slitdec(
+            result = slitdec.slitdec(
                 case["im"], case["pix_unc"], case["mask"], case["ycen"],
                 case["slitcurve"], case["slitdeltas"],
                 osample=6, lambda_sP=case["lambda_sP"], lambda_sL=case["lambda_sL"],
