@@ -282,6 +282,7 @@ Recorded because some of them were written into docs or commit messages on the w
   (the ESPRESSO case that motivated `weights=`): all synthetic tests have identical rows.
 - The transfer and bisector results assume a tilt sweep of several pixels; dependence on the
   sweep (1, 2, 5 px) and on `ncols` is not mapped (see LATER.md).
-- PyReduce still reads `PYREDUCE_CHARSLIT_OSAMP_SPEC` / `LAMBDA_FRINGE`; they need renaming
-  to `osample_x` / `mu_x` before it can use this branch for sampling recovery.
+- PyReduce master does not pass `osample_x` / `mu_x` (only its `osamp_spec` branch hacks the old
+  arguments in through environment variables); it needs them before it can use this for
+  sampling recovery.
 - [../LATER.md](../LATER.md): validation on real frames, the NaN issue, phase diagnostics.

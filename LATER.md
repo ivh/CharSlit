@@ -26,8 +26,9 @@ where science and calibration are extracted identically:
 - **What the synthetics cannot show:** a slit function that varies along the dispersion,
   line shapes that vary along the slit (fibre-chord rows, the case behind `weights=`), and
   the slit-function error that the propagated uncertainty ignores.
-- PyReduce reads `PYREDUCE_CHARSLIT_OSAMP_SPEC` / `LAMBDA_FRINGE`; rename to `osample_x` /
-  `mu_x` (and vendor the new `slitdec.c`) before it can run any of this.
+- PyReduce master passes neither `osample_x` nor `mu_x`; only its `osamp_spec` branch hacks the
+  old osamp_spec arguments in through environment variables. Expose `osample_x` / `mu_x` in
+  `cwrappers.py` before PyReduce can run any of this.
 
 ## Phase diagnostics for `out_x < osample_x` (2026-11-16)
 
