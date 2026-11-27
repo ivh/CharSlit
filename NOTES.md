@@ -122,6 +122,11 @@ historic model differs from reduce.so by 2.3e-3 rms.
   makes lines 1.6 % deeper per unit depth. slitdec_ox with osample_x = 1 does the same, so
   the cause is the split, not the penalties. Slicer steps and background change neither
   ratio.
+- Background: reduce.pro did not subtract the scattered light (mkscatter without
+  /SUBTRACT; getspec with /NO_SCATTER). Turned on 26-Nov-26; the 21 frames re-reduced
+  into Reduced_red_bgsub. Flux falls by 3-6 % (12 % in the faintest frame). O2 lines are
+  2-15 % deeper, with equivalent widths larger by the same amount. Saturated O2 A cores go
+  from 3-5 % of the continuum to 0.0-0.2 %.
 - mu1_y: 1e-2 against legacy lambda_sf = 2 (~2e-3) changes sP by 3e-4 median, at most
   a few % in single pixels. Expected: the slit-function penalty acts on sub-pixel
   structure of sL, which the spectrum integrates over.
